@@ -12,6 +12,11 @@ services:
       context: .
       dockerfile: Dockerfile.coordinator
     container_name: coordinator
+    environment:
+      - REDIS_HOST=redis
+      - REDIS_PORT=6379
+      - JOB_QUEUE_NAME=jobs
+      - COORDINATOR_DB_PATH=/app/results/coordinator.db
     ports:
       - "8000:8000"
     depends_on:
@@ -24,6 +29,11 @@ services:
       context: .
       dockerfile: Dockerfile.worker
     container_name: worker
+    environment:
+      - REDIS_HOST=redis
+      - REDIS_PORT=6379
+      - JOB_QUEUE_NAME=jobs
+      - WORKER_QUEUES=jobs
     depends_on:
       - redis
     volumes:
