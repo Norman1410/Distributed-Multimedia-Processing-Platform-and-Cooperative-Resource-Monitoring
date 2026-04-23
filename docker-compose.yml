@@ -1,0 +1,31 @@
+version: '3.9'
+
+services:
+  redis:
+    image: redis:7
+    container_name: redis
+    ports:
+      - "6379:6379"
+
+  coordinator:
+    build:
+      context: .
+      dockerfile: Dockerfile.coordinator
+    container_name: coordinator
+    ports:
+      - "8000:8000"
+    depends_on:
+      - redis
+    volumes:
+      - ./results:/app/results
+      - ./dataset:/app/dataset
+  worker:
+    build:
+      context: .
+      dockerfile: Dockerfile.worker
+    container_name: worker
+    depends_on:
+      - redis
+    volumes:
+      - ./results:/app/results
+      - ./dataset:/app/dataset

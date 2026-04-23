@@ -1,0 +1,9 @@
+fastapi
+uvicorn
+redis
+rq
+psutil
+python-multipart
+pydantic
+requests
+jinja2
