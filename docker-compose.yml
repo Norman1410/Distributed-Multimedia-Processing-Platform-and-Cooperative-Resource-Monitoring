@@ -1,5 +1,3 @@
-version: '3.9'
-
 services:
   redis:
     image: redis:7
@@ -24,16 +22,49 @@ services:
     volumes:
       - ./results:/app/results
       - ./dataset:/app/dataset
-  worker:
+
+  worker_1:
     build:
       context: .
       dockerfile: Dockerfile.worker
-    container_name: worker
     environment:
       - REDIS_HOST=redis
       - REDIS_PORT=6379
       - JOB_QUEUE_NAME=jobs
       - WORKER_QUEUES=jobs
+      - WORKER_ID=worker-1
+    depends_on:
+      - redis
+    volumes:
+      - ./results:/app/results
+      - ./dataset:/app/dataset
+
+  worker_2:
+    build:
+      context: .
+      dockerfile: Dockerfile.worker
+    environment:
+      - REDIS_HOST=redis
+      - REDIS_PORT=6379
+      - JOB_QUEUE_NAME=jobs
+      - WORKER_QUEUES=jobs
+      - WORKER_ID=worker-2
+    depends_on:
+      - redis
+    volumes:
+      - ./results:/app/results
+      - ./dataset:/app/dataset
+
+  worker_3:
+    build:
+      context: .
+      dockerfile: Dockerfile.worker
+    environment:
+      - REDIS_HOST=redis
+      - REDIS_PORT=6379
+      - JOB_QUEUE_NAME=jobs
+      - WORKER_QUEUES=jobs
+      - WORKER_ID=worker-3
     depends_on:
       - redis
     volumes:

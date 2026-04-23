@@ -1,0 +1,566 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Distributed Multimedia Monitor</title>
+  <style>
+    :root {
+      --bg: #f3eadb;
+      --panel: rgba(255, 250, 241, 0.93);
+      --ink: #18283a;
+      --muted: #64748b;
+      --accent: #c95f34;
+      --accent-soft: #f9ddcf;
+      --line: #e7d7bf;
+      --ok: #248a57;
+      --ok-soft: #daf4e6;
+      --warn: #b57419;
+      --warn-soft: #fdecc9;
+      --bad: #b63e3e;
+      --bad-soft: #f9dede;
+      --shadow: 0 24px 60px rgba(86, 56, 31, 0.12);
+    }
+
+    * { box-sizing: border-box; }
+
+    body {
+      margin: 0;
+      font-family: "Segoe UI", Tahoma, sans-serif;
+      color: var(--ink);
+      background:
+        radial-gradient(circle at top right, rgba(201, 95, 52, 0.18), transparent 22%),
+        radial-gradient(circle at bottom left, rgba(201, 95, 52, 0.12), transparent 18%),
+        linear-gradient(180deg, #fcf6ed 0%, var(--bg) 100%);
+    }
+
+    .shell {
+      max-width: 1240px;
+      margin: 0 auto;
+      padding: 28px 18px 40px;
+    }
+
+    .hero {
+      display: grid;
+      gap: 14px;
+      margin-bottom: 22px;
+    }
+
+    .eyebrow {
+      color: var(--accent);
+      font-size: 12px;
+      font-weight: 800;
+      letter-spacing: 0.22em;
+      text-transform: uppercase;
+    }
+
+    h1 {
+      margin: 0;
+      font-size: clamp(2.2rem, 5vw, 4rem);
+      line-height: 0.95;
+      max-width: 760px;
+    }
+
+    .subtitle {
+      margin: 0;
+      max-width: 760px;
+      color: var(--muted);
+      font-size: 1rem;
+    }
+
+    .layout {
+      display: grid;
+      grid-template-columns: 360px minmax(0, 1fr);
+      gap: 18px;
+      align-items: start;
+    }
+
+    .stack {
+      display: grid;
+      gap: 18px;
+      position: sticky;
+      top: 16px;
+    }
+
+    .card {
+      background: var(--panel);
+      border: 1px solid var(--line);
+      border-radius: 22px;
+      box-shadow: var(--shadow);
+      padding: 18px;
+      backdrop-filter: blur(8px);
+    }
+
+    .section-title {
+      margin: 0 0 14px;
+      font-size: 1.05rem;
+    }
+
+    .form-grid {
+      display: grid;
+      gap: 12px;
+    }
+
+    label {
+      display: grid;
+      gap: 6px;
+      font-size: 0.9rem;
+      color: var(--muted);
+      font-weight: 600;
+    }
+
+    select, input, button {
+      font: inherit;
+    }
+
+    select, input {
+      width: 100%;
+      border: 1px solid var(--line);
+      border-radius: 14px;
+      background: #fffdf8;
+      padding: 12px 14px;
+      color: var(--ink);
+    }
+
+    .hint {
+      color: var(--muted);
+      font-size: 0.83rem;
+      margin: 0;
+    }
+
+    .actions {
+      display: flex;
+      gap: 10px;
+      align-items: center;
+      flex-wrap: wrap;
+    }
+
+    button {
+      border: none;
+      border-radius: 999px;
+      background: linear-gradient(135deg, #d86d41 0%, #b84a24 100%);
+      color: white;
+      padding: 12px 18px;
+      font-weight: 700;
+      cursor: pointer;
+      box-shadow: 0 14px 26px rgba(184, 74, 36, 0.25);
+    }
+
+    button:disabled {
+      opacity: 0.6;
+      cursor: wait;
+    }
+
+    .secondary {
+      background: transparent;
+      border: 1px solid var(--line);
+      color: var(--ink);
+      box-shadow: none;
+    }
+
+    .flash {
+      min-height: 22px;
+      margin: 0;
+      font-size: 0.9rem;
+      font-weight: 600;
+    }
+
+    .flash.ok { color: var(--ok); }
+    .flash.bad { color: var(--bad); }
+
+    .metrics {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(170px, 1fr));
+      gap: 14px;
+      margin-bottom: 18px;
+    }
+
+    .metric {
+      background: var(--panel);
+      border: 1px solid var(--line);
+      border-radius: 18px;
+      box-shadow: var(--shadow);
+      padding: 16px;
+    }
+
+    .metric-label {
+      color: var(--muted);
+      font-size: 0.84rem;
+      margin-bottom: 8px;
+    }
+
+    .metric-value {
+      font-size: 1.9rem;
+      font-weight: 800;
+    }
+
+    .two-up {
+      display: grid;
+      grid-template-columns: 1.2fr 1fr;
+      gap: 18px;
+      margin-bottom: 18px;
+    }
+
+    table {
+      width: 100%;
+      border-collapse: collapse;
+      font-size: 0.93rem;
+    }
+
+    th, td {
+      padding: 10px 8px;
+      text-align: left;
+      border-bottom: 1px solid var(--line);
+      vertical-align: top;
+    }
+
+    th {
+      color: var(--muted);
+      text-transform: uppercase;
+      letter-spacing: 0.05em;
+      font-size: 0.76rem;
+    }
+
+    .pill {
+      display: inline-flex;
+      align-items: center;
+      padding: 4px 10px;
+      border-radius: 999px;
+      font-size: 0.78rem;
+      font-weight: 800;
+    }
+
+    .status-ready, .status-completed { background: var(--ok-soft); color: var(--ok); }
+    .status-busy, .status-running { background: var(--warn-soft); color: var(--warn); }
+    .status-error, .status-failed { background: var(--bad-soft); color: var(--bad); }
+    .status-queued, .status-pending { background: var(--accent-soft); color: var(--accent); }
+
+    .meta-list {
+      display: grid;
+      gap: 10px;
+    }
+
+    .meta-row {
+      display: flex;
+      justify-content: space-between;
+      gap: 12px;
+      border-bottom: 1px solid var(--line);
+      padding-bottom: 10px;
+    }
+
+    .meta-key {
+      color: var(--muted);
+      font-size: 0.82rem;
+      text-transform: uppercase;
+      letter-spacing: 0.04em;
+    }
+
+    .muted {
+      color: var(--muted);
+      font-size: 0.85rem;
+    }
+
+    .refresh-row {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      gap: 10px;
+      margin-bottom: 12px;
+      color: var(--muted);
+      font-size: 0.85rem;
+    }
+
+    @media (max-width: 980px) {
+      .layout, .two-up {
+        grid-template-columns: 1fr;
+      }
+
+      .stack {
+        position: static;
+      }
+    }
+  </style>
+</head>
+<body>
+  <main class="shell">
+    <section class="hero">
+      <div class="eyebrow">Distributed Monitor</div>
+      <h1>Cooperative Multimedia Processing Dashboard</h1>
+      <p class="subtitle">
+        Consola de observacion y control para crear jobs, seguir estados en tiempo real y verificar la distribucion entre workers.
+      </p>
+    </section>
+
+    <section class="layout">
+      <aside class="stack">
+        <article class="card">
+          <h2 class="section-title">Crear Nuevo Job</h2>
+          <form id="job-form" class="form-grid">
+            <label>
+              Archivo del dataset
+              <select id="file-path" name="file_path"></select>
+            </label>
+
+            <label>
+              Operacion
+              <select id="operation" name="operation">
+                <option value="extract_audio">extract_audio</option>
+              </select>
+            </label>
+
+            <label>
+              Prioridad
+              <input id="priority" name="priority" type="number" min="1" max="10" value="5">
+            </label>
+
+            <div class="actions">
+              <button id="submit-button" type="submit">Crear Job</button>
+              <button id="refresh-button" class="secondary" type="button">Actualizar Ahora</button>
+            </div>
+            <p class="hint">
+              El formulario usa directamente `POST /jobs`, asi que cualquier job creado aqui queda registrado igual que desde la API.
+            </p>
+            <p id="flash" class="flash"></p>
+          </form>
+        </article>
+
+        <article class="card">
+          <h2 class="section-title">Resumen Del Sistema</h2>
+          <div class="meta-list" id="summary-list"></div>
+          <p class="muted">
+            Los workers se consideran activos si reportaron heartbeat recientemente.
+          </p>
+        </article>
+      </aside>
+
+      <section>
+        <div class="refresh-row">
+          <span>Actualizacion automatica cada 3 segundos.</span>
+          <span id="last-refresh">Esperando datos...</span>
+        </div>
+
+        <section class="metrics">
+          <article class="metric">
+            <div class="metric-label">Jobs Totales</div>
+            <div class="metric-value" id="metric-total">0</div>
+          </article>
+          <article class="metric">
+            <div class="metric-label">En Cola</div>
+            <div class="metric-value" id="metric-queued">0</div>
+          </article>
+          <article class="metric">
+            <div class="metric-label">En Ejecucion</div>
+            <div class="metric-value" id="metric-running">0</div>
+          </article>
+          <article class="metric">
+            <div class="metric-label">Completados</div>
+            <div class="metric-value" id="metric-completed">0</div>
+          </article>
+        </section>
+
+        <section class="two-up">
+          <article class="card">
+            <h2 class="section-title">Workers Activos</h2>
+            <table>
+              <thead>
+                <tr>
+                  <th>Worker</th>
+                  <th>Estado</th>
+                  <th>CPU</th>
+                  <th>Memoria</th>
+                  <th>Job Actual</th>
+                  <th>Ultimo Seen</th>
+                </tr>
+              </thead>
+              <tbody id="workers-body"></tbody>
+            </table>
+          </article>
+
+          <article class="card">
+            <h2 class="section-title">Cola Y Coordinador</h2>
+            <div class="meta-list" id="queue-list"></div>
+          </article>
+        </section>
+
+        <article class="card">
+          <h2 class="section-title">Jobs Recientes</h2>
+          <table>
+            <thead>
+              <tr>
+                <th>Job</th>
+                <th>Archivo</th>
+                <th>Operacion</th>
+                <th>Estado</th>
+                <th>Worker</th>
+                <th>Prioridad</th>
+                <th>Progreso</th>
+                <th>Actualizado</th>
+              </tr>
+            </thead>
+            <tbody id="jobs-body"></tbody>
+          </table>
+        </article>
+      </section>
+    </section>
+  </main>
+
+  <script>
+    const refreshIntervalMs = 3000;
+    const form = document.getElementById("job-form");
+    const filePathSelect = document.getElementById("file-path");
+    const priorityInput = document.getElementById("priority");
+    const submitButton = document.getElementById("submit-button");
+    const flash = document.getElementById("flash");
+    const refreshButton = document.getElementById("refresh-button");
+
+    function formatPercent(value) {
+      if (value === null || value === undefined) return "n/a";
+      return `${value}%`;
+    }
+
+    function pill(status) {
+      return `<span class="pill status-${status}">${status}</span>`;
+    }
+
+    function setFlash(message, type = "") {
+      flash.textContent = message || "";
+      flash.className = `flash ${type}`.trim();
+    }
+
+    function renderSummary(summary) {
+      document.getElementById("metric-total").textContent = summary.jobs.total;
+      document.getElementById("metric-queued").textContent = summary.jobs.status_counts.queued;
+      document.getElementById("metric-running").textContent = summary.jobs.status_counts.running;
+      document.getElementById("metric-completed").textContent = summary.jobs.status_counts.completed;
+      document.getElementById("last-refresh").textContent = `Ultima actualizacion: ${summary.generated_at}`;
+
+      const summaryRows = [
+        ["Workers activos", summary.workers.active_count],
+        ["Workers totales", summary.workers.total_count],
+        ["Jobs pendientes", summary.jobs.status_counts.pending],
+        ["Jobs fallidos", summary.jobs.status_counts.failed],
+      ];
+      document.getElementById("summary-list").innerHTML = summaryRows.map(([key, value]) => `
+        <div class="meta-row">
+          <span class="meta-key">${key}</span>
+          <strong>${value}</strong>
+        </div>
+      `).join("");
+
+      const queueRows = [
+        ["Cola", summary.queue.name],
+        ["Jobs en cola", summary.queue.pending_in_queue],
+        ["CPU coordinador", formatPercent(summary.coordinator.cpu_percent)],
+        ["Memoria coordinador", formatPercent(summary.coordinator.memory_percent)],
+      ];
+      document.getElementById("queue-list").innerHTML = queueRows.map(([key, value]) => `
+        <div class="meta-row">
+          <span class="meta-key">${key}</span>
+          <strong>${value}</strong>
+        </div>
+      `).join("");
+
+      document.getElementById("workers-body").innerHTML = summary.workers.nodes.map(worker => `
+        <tr>
+          <td>${worker.worker_id}</td>
+          <td>${pill(worker.status)}</td>
+          <td>${formatPercent(worker.cpu_percent)}</td>
+          <td>${formatPercent(worker.memory_percent)}</td>
+          <td>${worker.current_job_id || "-"}</td>
+          <td>${worker.last_seen}</td>
+        </tr>
+      `).join("") || `<tr><td colspan="6" class="muted">No hay workers reportando todavia.</td></tr>`;
+
+      document.getElementById("jobs-body").innerHTML = summary.recent_jobs.map(job => `
+        <tr>
+          <td>${job.job_id}</td>
+          <td>${job.file_path}</td>
+          <td>${job.operation}</td>
+          <td>${pill(job.status)}</td>
+          <td>${job.worker_id || "-"}</td>
+          <td>${job.priority}</td>
+          <td>${job.progress}%</td>
+          <td>${job.updated_at}</td>
+        </tr>
+      `).join("") || `<tr><td colspan="8" class="muted">Todavia no hay jobs registrados.</td></tr>`;
+    }
+
+    async function loadSummary() {
+      const response = await fetch("/monitor/summary");
+      if (!response.ok) throw new Error("No fue posible cargar el resumen del sistema.");
+      const summary = await response.json();
+      renderSummary(summary);
+    }
+
+    async function loadDatasetFiles() {
+      const response = await fetch("/monitor/dataset-files");
+      if (!response.ok) throw new Error("No fue posible cargar los archivos del dataset.");
+      const payload = await response.json();
+      filePathSelect.innerHTML = payload.files.map(file => `
+        <option value="${file.file_path}">${file.name} (${file.size_bytes} bytes)</option>
+      `).join("");
+      if (!payload.files.length) {
+        filePathSelect.innerHTML = `<option value="">No hay archivos disponibles</option>`;
+      }
+    }
+
+    async function refreshAll() {
+      try {
+        await loadSummary();
+      } catch (error) {
+        setFlash(error.message, "bad");
+      }
+    }
+
+    form.addEventListener("submit", async (event) => {
+      event.preventDefault();
+      if (!filePathSelect.value) {
+        setFlash("Selecciona primero un archivo del dataset.", "bad");
+        return;
+      }
+
+      submitButton.disabled = true;
+      setFlash("Creando job...", "");
+      try {
+        const response = await fetch("/jobs", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            file_path: filePathSelect.value,
+            operation: document.getElementById("operation").value,
+            priority: Number(priorityInput.value),
+          }),
+        });
+        const payload = await response.json();
+        if (!response.ok) {
+          throw new Error(payload.detail || "No fue posible crear el job.");
+        }
+        setFlash(`Job creado: ${payload.job_id}`, "ok");
+        await refreshAll();
+      } catch (error) {
+        setFlash(error.message, "bad");
+      } finally {
+        submitButton.disabled = false;
+      }
+    });
+
+    refreshButton.addEventListener("click", async () => {
+      setFlash("");
+      await refreshAll();
+    });
+
+    async function bootstrap() {
+      try {
+        await loadDatasetFiles();
+        await refreshAll();
+        setFlash("Dashboard listo para crear y observar jobs.", "ok");
+      } catch (error) {
+        setFlash(error.message, "bad");
+      }
+    }
+
+    bootstrap();
+    setInterval(refreshAll, refreshIntervalMs);
+  </script>
+</body>
+</html>

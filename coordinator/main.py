@@ -1,7 +1,13 @@
 import uuid
+from datetime import datetime, timedelta, timezone
+from pathlib import Path
 from typing import Optional
 
+import psutil
 from fastapi import FastAPI, HTTPException, Query
+from fastapi.responses import HTMLResponse
+from fastapi.templating import Jinja2Templates
+from fastapi import Request
 
 from coordinator.models import (
     JobEventResponse,
@@ -11,12 +17,72 @@ from coordinator.models import (
     JobResultResponse,
     JobStatusResponse,
 )
-from coordinator.persistence import JobStore, VALID_JOB_STATUSES
 from coordinator.queue_manager import JOB_QUEUE_NAME, job_queue
+from shared.job_store import JobStore, VALID_JOB_STATUSES
 
 
 app = FastAPI(title="Distributed Multimedia Coordinator")
 job_store = JobStore()
+templates = Jinja2Templates(directory=str(Path(__file__).parent / "templates"))
+DATASET_DIR = Path("/app/dataset")
+
+
+def build_monitor_summary() -> dict:
+    active_cutoff = datetime.now(timezone.utc) - timedelta(seconds=20)
+    workers = []
+    for worker in job_store.list_worker_nodes():
+        last_seen_raw = worker.get("last_seen")
+        is_active = False
+        if last_seen_raw:
+            try:
+                is_active = datetime.fromisoformat(last_seen_raw) >= active_cutoff
+            except ValueError:
+                is_active = False
+        worker["is_active"] = is_active
+        workers.append(worker)
+
+    jobs = job_store.list_jobs(limit=25)
+    status_counts = job_store.get_job_status_counts()
+
+    return {
+        "generated_at": datetime.now(timezone.utc).isoformat(),
+        "coordinator": {
+            "cpu_percent": psutil.cpu_percent(interval=None),
+            "memory_percent": psutil.virtual_memory().percent,
+        },
+        "queue": {
+            "name": JOB_QUEUE_NAME,
+            "pending_in_queue": job_queue.count,
+        },
+        "jobs": {
+            "total": sum(status_counts.values()),
+            "status_counts": status_counts,
+        },
+        "workers": {
+            "total_count": len(workers),
+            "active_count": sum(1 for worker in workers if worker["is_active"]),
+            "nodes": workers,
+        },
+        "recent_jobs": jobs,
+    }
+
+
+def list_dataset_files() -> list[dict]:
+    if not DATASET_DIR.exists():
+        return []
+
+    files = []
+    for file_path in sorted(DATASET_DIR.iterdir()):
+        if not file_path.is_file() or file_path.name.startswith("."):
+            continue
+        files.append(
+            {
+                "file_path": f"dataset/{file_path.name}",
+                "name": file_path.name,
+                "size_bytes": file_path.stat().st_size,
+            }
+        )
+    return files
 
 
 @app.get("/")
@@ -25,6 +91,28 @@ def root():
         "message": "Coordinador funcionando",
         "queue_name": JOB_QUEUE_NAME,
     }
+
+
+@app.get("/monitor/summary")
+def monitor_summary():
+    summary = build_monitor_summary()
+    return summary
+
+
+@app.get("/monitor/dataset-files")
+def monitor_dataset_files():
+    return {"files": list_dataset_files()}
+
+
+@app.get("/dashboard", response_class=HTMLResponse)
+def dashboard(request: Request):
+    return templates.TemplateResponse(
+        request,
+        "dashboard.html",
+        {
+            "request": request,
+        },
+    )
 
 
 @app.post("/jobs", response_model=JobResponse, status_code=201)
