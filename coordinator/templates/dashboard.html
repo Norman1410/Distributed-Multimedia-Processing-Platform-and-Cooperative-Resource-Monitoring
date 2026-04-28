@@ -447,9 +447,14 @@
         </div>
       `).join("");
 
+      const queueOrder = (summary.queue.priority_order || []).join(" > ") || "n/a";
+      const byQueue = summary.queue.pending_by_queue || {};
       const queueRows = [
-        ["Cola", summary.queue.name],
-        ["Jobs en cola", summary.queue.pending_in_queue],
+        ["Prioridad cola", queueOrder],
+        ["Jobs en cola (total)", summary.queue.pending_in_queue],
+        ["En jobs_high", byQueue.jobs_high ?? 0],
+        ["En jobs_normal", byQueue.jobs_normal ?? 0],
+        ["En jobs_low", byQueue.jobs_low ?? 0],
         ["CPU coordinador", formatPercent(summary.coordinator.cpu_percent)],
         ["Memoria coordinador", formatPercent(summary.coordinator.memory_percent)],
       ];

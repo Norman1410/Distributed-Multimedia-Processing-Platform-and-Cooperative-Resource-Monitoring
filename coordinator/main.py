@@ -17,7 +17,12 @@ from coordinator.models import (
     JobResultResponse,
     JobStatusResponse,
 )
-from coordinator.queue_manager import JOB_QUEUE_NAME, job_queue
+from coordinator.queue_manager import (
+    QUEUE_PRIORITY_ORDER,
+    get_pending_jobs_by_queue,
+    get_queue_for_priority,
+    resolve_queue_name_for_priority,
+)
 from shared.job_store import JobStore, VALID_JOB_STATUSES
 
 
@@ -43,6 +48,7 @@ def build_monitor_summary() -> dict:
 
     jobs = job_store.list_jobs(limit=25)
     status_counts = job_store.get_job_status_counts()
+    pending_by_queue = get_pending_jobs_by_queue()
 
     return {
         "generated_at": datetime.now(timezone.utc).isoformat(),
@@ -51,8 +57,9 @@ def build_monitor_summary() -> dict:
             "memory_percent": psutil.virtual_memory().percent,
         },
         "queue": {
-            "name": JOB_QUEUE_NAME,
-            "pending_in_queue": job_queue.count,
+            "priority_order": QUEUE_PRIORITY_ORDER,
+            "pending_by_queue": pending_by_queue,
+            "pending_in_queue": sum(pending_by_queue.values()),
         },
         "jobs": {
             "total": sum(status_counts.values()),
@@ -89,7 +96,7 @@ def list_dataset_files() -> list[dict]:
 def root():
     return {
         "message": "Coordinador funcionando",
-        "queue_name": JOB_QUEUE_NAME,
+        "queue_priority_order": QUEUE_PRIORITY_ORDER,
     }
 
 
@@ -125,8 +132,11 @@ def create_job(job: JobRequest):
         priority=job.priority,
     )
 
+    selected_queue = get_queue_for_priority(job.priority)
+    selected_queue_name = resolve_queue_name_for_priority(job.priority)
+
     try:
-        rq_job = job_queue.enqueue(
+        rq_job = selected_queue.enqueue(
             "worker.processor.process_task",
             job_id,
             job.file_path,
@@ -141,7 +151,7 @@ def create_job(job: JobRequest):
 
     job_store.mark_job_queued(
         job_id=job_id,
-        queue_name=JOB_QUEUE_NAME,
+        queue_name=selected_queue_name,
         rq_job_id=getattr(rq_job, "id", None),
     )
     return JobResponse(job_id=job_id, status="queued")

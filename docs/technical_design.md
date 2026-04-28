@@ -116,14 +116,16 @@ Objetivo: distribuir carga en multiples workers con una cola compartida.
 
 Estrategia definida:
 
-- FIFO por defecto con soporte de prioridad en metadato del job.
-- Workers competidores sobre la misma cola `jobs` (modelo pull).
+- Colas separadas por prioridad:
+- `jobs_high` para prioridad `1..3`.
+- `jobs_normal` para prioridad `4..7`.
+- `jobs_low` para prioridad `8..10`.
+- Workers competidores escuchando en orden `jobs_high -> jobs_normal -> jobs_low`.
 - Reintentos y reasignacion se gestionaran por RQ en la siguiente iteracion.
 - Se prioriza escalamiento horizontal de workers (`N` instancias) sobre tuning monolitico.
 
 Evolucion planificada (sin implementar aun):
 
-- colas por prioridad (`jobs_high`, `jobs_normal`, `jobs_low`)
 - politica de asignacion basada en carga reportada por worker
 - backoff/retry controlado por tipo de error
 
@@ -184,7 +186,16 @@ Uso:
 - `idx_jobs_status` sobre `jobs(status)`
 - `idx_job_events_job_id` sobre `job_events(job_id)`
 
-## 6) Criterios de aceptacion para estas 2 tareas
+## 6) Generacion automatica de tareas (batch)
+
+Se agrega un cliente de carga automatica en `scripts/generate_batch_jobs.py` que:
+
+- recorre `dataset/` por extensiones configurables
+- crea jobs concurrentes contra `POST /jobs`
+- permite repetir cada archivo con `--repeat` para pruebas de carga
+- permite overrides por archivo con `--metadata-json` (prioridad y operacion)
+
+## 7) Criterios de aceptacion para estas 2 tareas
 
 - Existe documento tecnico con arquitectura, estados, API y balanceo.
 - El coordinador ya no usa almacenamiento en memoria para estado de jobs.

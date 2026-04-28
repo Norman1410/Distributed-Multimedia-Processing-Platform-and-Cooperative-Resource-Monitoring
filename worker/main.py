@@ -11,12 +11,19 @@ from shared.job_store import JobStore
 
 REDIS_HOST = os.getenv("REDIS_HOST", "redis")
 REDIS_PORT = int(os.getenv("REDIS_PORT", 6379))
+DEFAULT_WORKER_QUEUES = ",".join(
+    [
+        os.getenv("JOB_QUEUE_HIGH_NAME", "jobs_high"),
+        os.getenv("JOB_QUEUE_NORMAL_NAME", "jobs_normal"),
+        os.getenv("JOB_QUEUE_LOW_NAME", "jobs_low"),
+    ]
+)
 WORKER_ID = os.getenv("WORKER_ID", "worker-unknown")
 WORKER_HOSTNAME = socket.gethostname()
 HEARTBEAT_INTERVAL_SECONDS = int(os.getenv("WORKER_HEARTBEAT_INTERVAL_SECONDS", 5))
 WORKER_QUEUES = [
     queue_name.strip()
-    for queue_name in os.getenv("WORKER_QUEUES", os.getenv("JOB_QUEUE_NAME", "jobs")).split(",")
+    for queue_name in os.getenv("WORKER_QUEUES", DEFAULT_WORKER_QUEUES).split(",")
     if queue_name.strip()
 ]
 

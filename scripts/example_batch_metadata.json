@@ -1,0 +1,13 @@
+{
+  "files": [
+    {
+      "file": "sample-5s.mp4",
+      "operation": "extract_audio",
+      "priority": 2
+    },
+    {
+      "file": "video_largo.mp4",
+      "priority": 8
+    }
+  ]
+}

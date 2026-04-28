@@ -13,7 +13,11 @@ services:
     environment:
       - REDIS_HOST=redis
       - REDIS_PORT=6379
-      - JOB_QUEUE_NAME=jobs
+      - JOB_QUEUE_HIGH_NAME=jobs_high
+      - JOB_QUEUE_NORMAL_NAME=jobs_normal
+      - JOB_QUEUE_LOW_NAME=jobs_low
+      - JOB_PRIORITY_HIGH_MAX=3
+      - JOB_PRIORITY_NORMAL_MAX=7
       - COORDINATOR_DB_PATH=/app/results/coordinator.db
     ports:
       - "8000:8000"
@@ -30,8 +34,10 @@ services:
     environment:
       - REDIS_HOST=redis
       - REDIS_PORT=6379
-      - JOB_QUEUE_NAME=jobs
-      - WORKER_QUEUES=jobs
+      - JOB_QUEUE_HIGH_NAME=jobs_high
+      - JOB_QUEUE_NORMAL_NAME=jobs_normal
+      - JOB_QUEUE_LOW_NAME=jobs_low
+      - WORKER_QUEUES=jobs_high,jobs_normal,jobs_low
       - WORKER_ID=worker-1
     depends_on:
       - redis
@@ -46,8 +52,10 @@ services:
     environment:
       - REDIS_HOST=redis
       - REDIS_PORT=6379
-      - JOB_QUEUE_NAME=jobs
-      - WORKER_QUEUES=jobs
+      - JOB_QUEUE_HIGH_NAME=jobs_high
+      - JOB_QUEUE_NORMAL_NAME=jobs_normal
+      - JOB_QUEUE_LOW_NAME=jobs_low
+      - WORKER_QUEUES=jobs_high,jobs_normal,jobs_low
       - WORKER_ID=worker-2
     depends_on:
       - redis
@@ -62,8 +70,10 @@ services:
     environment:
       - REDIS_HOST=redis
       - REDIS_PORT=6379
-      - JOB_QUEUE_NAME=jobs
-      - WORKER_QUEUES=jobs
+      - JOB_QUEUE_HIGH_NAME=jobs_high
+      - JOB_QUEUE_NORMAL_NAME=jobs_normal
+      - JOB_QUEUE_LOW_NAME=jobs_low
+      - WORKER_QUEUES=jobs_high,jobs_normal,jobs_low
       - WORKER_ID=worker-3
     depends_on:
       - redis

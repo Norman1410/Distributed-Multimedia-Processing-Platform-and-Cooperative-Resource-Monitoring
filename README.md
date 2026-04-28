@@ -25,7 +25,11 @@ Revisa `.env.example`:
 
 - `REDIS_HOST`
 - `REDIS_PORT`
-- `JOB_QUEUE_NAME`
+- `JOB_QUEUE_HIGH_NAME`
+- `JOB_QUEUE_NORMAL_NAME`
+- `JOB_QUEUE_LOW_NAME`
+- `JOB_PRIORITY_HIGH_MAX`
+- `JOB_PRIORITY_NORMAL_MAX`
 - `WORKER_QUEUES`
 - `COORDINATOR_DB_PATH`
 
@@ -65,6 +69,10 @@ Notas:
 - Para una prueba exitosa necesitas colocar en `dataset/` un video real con pista de audio; `dataset/demo.mp4` solo sirve como placeholder de estructura.
 - El resultado esperado de `extract_audio` es un archivo `.mp3` guardado en `results/`.
 - El `docker-compose` levanta tres workers (`worker-1`, `worker-2`, `worker-3`) para evidenciar distribucion real de jobs.
+- La prioridad ahora es real con colas separadas:
+  - prioridad `1..3` -> `jobs_high`
+  - prioridad `4..7` -> `jobs_normal`
+  - prioridad `8..10` -> `jobs_low`
 
 ## Validacion de distribucion
 
@@ -122,6 +130,35 @@ Para validar esta fase:
    - aparecen en la tabla de jobs recientes
    - los workers muestran `worker-1`, `worker-2`, `worker-3`
    - el conteo por estado cambia conforme se encolan y completan trabajos
+   - el bloque de cola muestra `jobs_high`, `jobs_normal` y `jobs_low`
+
+## Generacion automatica por lote
+
+Para generar tareas automaticamente desde los archivos del dataset:
+
+```bash
+python scripts/generate_batch_jobs.py --coordinator-url http://localhost:8000 --dataset-dir dataset --operation extract_audio --priority 5 --concurrency 6
+```
+
+Opciones utiles:
+
+- Simular sin enviar jobs:
+
+  ```bash
+  python scripts/generate_batch_jobs.py --dry-run
+  ```
+
+- Repetir cada archivo varias veces (carga concurrente):
+
+  ```bash
+  python scripts/generate_batch_jobs.py --repeat 3 --concurrency 10
+  ```
+
+- Usar metadatos por archivo (prioridad/operacion por item):
+
+  ```bash
+  python scripts/generate_batch_jobs.py --metadata-json scripts/example_batch_metadata.json
+  ```
 
 ## Endpoints actuales del coordinador
 
