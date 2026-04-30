@@ -12,5 +12,6 @@ RUN apt-get update \
 
 COPY worker /app/worker
 COPY shared /app/shared
+COPY scripts /app/scripts
 
 CMD ["python", "-m", "worker.main"]

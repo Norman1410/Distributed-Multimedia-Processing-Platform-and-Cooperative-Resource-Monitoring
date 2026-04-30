@@ -1,4 +1,5 @@
 import uuid
+import os
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Optional
@@ -8,6 +9,7 @@ from fastapi import FastAPI, HTTPException, Query
 from fastapi.responses import HTMLResponse
 from fastapi.templating import Jinja2Templates
 from fastapi import Request
+from rq import Retry
 
 from coordinator.models import (
     JobEventResponse,
@@ -36,6 +38,15 @@ app = FastAPI(title="Distributed Multimedia Coordinator")
 job_store = JobStore()
 templates = Jinja2Templates(directory=str(Path(__file__).parent / "templates"))
 DATASET_DIR = Path("/app/dataset")
+JOB_TIMEOUT_SECONDS = int(os.getenv("JOB_TIMEOUT_SECONDS", "300"))
+JOB_MAX_RETRIES = int(os.getenv("JOB_MAX_RETRIES", "2"))
+JOB_RETRY_INTERVAL_SECONDS = int(os.getenv("JOB_RETRY_INTERVAL_SECONDS", "15"))
+
+
+def build_retry_policy() -> Retry | None:
+    if JOB_MAX_RETRIES <= 0:
+        return None
+    return Retry(max=JOB_MAX_RETRIES, interval=JOB_RETRY_INTERVAL_SECONDS)
 
 
 def build_monitor_summary() -> dict:
@@ -61,6 +72,9 @@ def build_monitor_summary() -> dict:
         "coordinator": {
             "cpu_percent": psutil.cpu_percent(interval=None),
             "memory_percent": psutil.virtual_memory().percent,
+            "job_timeout_seconds": JOB_TIMEOUT_SECONDS,
+            "job_max_retries": JOB_MAX_RETRIES,
+            "job_retry_interval_seconds": JOB_RETRY_INTERVAL_SECONDS,
         },
         "queue": {
             "priority_order": QUEUE_PRIORITY_ORDER,
@@ -157,6 +171,7 @@ def create_job(job: JobRequest):
         file_path=job.file_path,
         operation=normalized_operation,
         priority=job.priority,
+        max_attempts=JOB_MAX_RETRIES + 1,
     )
 
     selected_queue = get_queue_for_priority(job.priority)
@@ -168,9 +183,16 @@ def create_job(job: JobRequest):
             job_id,
             job.file_path,
             normalized_operation,
+            job_timeout=JOB_TIMEOUT_SECONDS,
+            retry=build_retry_policy(),
         )
     except Exception as exc:
-        job_store.mark_job_failed(job_id, f"queue_enqueue_error: {exc}")
+        job_store.mark_job_failed(
+            job_id,
+            f"queue_enqueue_error: {exc}",
+            error_type="queue_enqueue_error",
+            retryable=True,
+        )
         raise HTTPException(
             status_code=503,
             detail="No fue posible encolar el trabajo en este momento.",

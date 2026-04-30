@@ -24,8 +24,12 @@ class JobStatusResponse(BaseModel):
     progress: float = 0.0
     queue_name: Optional[str] = None
     rq_job_id: Optional[str] = None
+    attempt_count: int = 0
+    max_attempts: int = 1
     result_path: Optional[str] = None
     error_message: Optional[str] = None
+    error_type: Optional[str] = None
+    retryable: bool = False
     created_at: str
     queued_at: Optional[str] = None
     started_at: Optional[str] = None

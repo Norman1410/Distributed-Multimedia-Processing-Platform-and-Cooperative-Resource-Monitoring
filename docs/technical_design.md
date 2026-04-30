@@ -129,13 +129,16 @@ Estrategia definida:
 - `jobs_normal` para prioridad `4..7`.
 - `jobs_low` para prioridad `8..10`.
 - Workers competidores escuchando en orden `jobs_high -> jobs_normal -> jobs_low`.
-- Reintentos y reasignacion se gestionaran por RQ en la siguiente iteracion.
+- Reintentos y timeout se gestionan con RQ usando `JOB_MAX_RETRIES`,
+  `JOB_RETRY_INTERVAL_SECONDS` y `JOB_TIMEOUT_SECONDS`.
+- Cada worker aplica timeout a `ffmpeg`/`ffprobe` con
+  `WORKER_PROCESS_TIMEOUT_SECONDS`.
 - Se prioriza escalamiento horizontal de workers (`N` instancias) sobre tuning monolitico.
 
-Evolucion planificada (sin implementar aun):
+Evolucion planificada:
 
 - politica de asignacion basada en carga reportada por worker
-- backoff/retry controlado por tipo de error
+- backoff dinamico basado en tipo de error y saturacion
 
 ## 5) Operaciones multimedia en worker
 
@@ -165,13 +168,16 @@ Campos clave:
 - `status`
 - `worker_id`, `progress`
 - `queue_name`, `rq_job_id`
+- `attempt_count`, `max_attempts`
 - `result_path`, `error_message`
+- `error_type`, `retryable`
 - `created_at`, `queued_at`, `started_at`, `finished_at`, `updated_at`
 
 Uso:
 
 - fuente de verdad del estado actual de cada trabajo
 - consulta para dashboard y cliente
+- trazabilidad de reintentos y clasificacion de fallos
 
 ### 6.2 Tabla `job_events`
 
@@ -223,3 +229,18 @@ Se agrega un cliente de carga automatica en `scripts/generate_batch_jobs.py` que
 - El coordinador ya no usa almacenamiento en memoria para estado de jobs.
 - Existe esquema persistente para `jobs`, `job_events` y `job_results`.
 - Se puede crear y consultar jobs con estado persistido en SQLite.
+
+## 9) Robustez operacional
+
+Errores clasificados en worker:
+
+- `input_file_not_found`: archivo de entrada inexistente, no reintentable.
+- `unsupported_operation`: operacion fuera del contrato, no reintentable.
+- `tool_unavailable`: falta `ffmpeg` o `ffprobe`, no reintentable.
+- `operation_timeout`: comando multimedia excedio timeout, reintentable.
+- `multimedia_processing_error`: ffmpeg/ffprobe fallo por el contenido, no reintentable.
+- `unexpected_worker_error`: error no previsto, reintentable.
+
+Si un error es reintentable y RQ aun reporta intentos disponibles, el job vuelve a
+`queued` con evento `job_retry_scheduled`. Si ya no quedan intentos, el job queda
+en `failed` con `error_type`, `retryable` y `attempt_count` persistidos.

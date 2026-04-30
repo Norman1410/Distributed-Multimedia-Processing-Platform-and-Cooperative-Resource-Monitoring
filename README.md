@@ -18,6 +18,8 @@ Arquitectura base:
 El diseno tecnico detallado (arquitectura, estados de job, contratos API, balanceo y modelo de datos) esta en:
 
 - [docs/technical_design.md](docs/technical_design.md)
+- [docs/manual_usuario.md](docs/manual_usuario.md)
+- [docs/informe_resultados.md](docs/informe_resultados.md)
 
 ## Variables de entorno
 
@@ -32,6 +34,10 @@ Revisa `.env.example`:
 - `JOB_PRIORITY_NORMAL_MAX`
 - `WORKER_QUEUES`
 - `COORDINATOR_DB_PATH`
+- `JOB_TIMEOUT_SECONDS`
+- `JOB_MAX_RETRIES`
+- `JOB_RETRY_INTERVAL_SECONDS`
+- `WORKER_PROCESS_TIMEOUT_SECONDS`
 
 ## Arranque minimo con Docker
 
@@ -137,6 +143,18 @@ Para validar esta fase:
    - el conteo por estado cambia conforme se encolan y completan trabajos
    - el bloque de cola muestra `jobs_high`, `jobs_normal` y `jobs_low`
 
+## Dataset curado y metadatos
+
+El repositorio no versiona videos pesados. Para generar un dataset reproducible
+con distintos tamanos, duraciones y orientaciones:
+
+```bash
+docker compose run --rm worker_1 python scripts/generate_curated_dataset.py --dataset-dir /app/dataset
+docker compose run --rm worker_1 python scripts/build_dataset_metadata.py --dataset-dir /app/dataset --output /app/dataset/dataset_metadata.json
+```
+
+El manifest queda en `dataset/dataset_metadata.json`.
+
 ## Generacion automatica por lote
 
 Para generar tareas automaticamente desde los archivos del dataset:
@@ -164,6 +182,34 @@ Opciones utiles:
   ```bash
   python scripts/generate_batch_jobs.py --metadata-json scripts/example_batch_metadata.json
   ```
+
+## Pruebas de carga formales
+
+Con el stack arriba y el dataset documentado:
+
+```bash
+docker compose run --rm worker_1 python scripts/run_load_test.py --coordinator-url http://coordinator:8000 --dataset-metadata /app/dataset/dataset_metadata.json --repeat 2 --concurrency 8
+```
+
+Salidas principales:
+
+- `results/load_test_metrics.json`
+- `docs/informe_resultados.md`
+
+## Limpieza para entrega
+
+Revisar artefactos generados y duplicados:
+
+```bash
+docker compose run --rm worker_1 python scripts/prepare_delivery_cleanup.py
+```
+
+Aplicar limpieza de `results/` solo cuando ya no necesites los artefactos de
+ejecucion:
+
+```bash
+docker compose run --rm worker_1 python scripts/prepare_delivery_cleanup.py --apply
+```
 
 ## Endpoints actuales del coordinador
 

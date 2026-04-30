@@ -1,0 +1,209 @@
+{
+  "dataset_name": "curated_multimedia_load_dataset",
+  "version": "2026-04-29",
+  "generated_at": "2026-04-30T03:25:08.638047+00:00",
+  "dataset_dir": "dataset",
+  "total_files": 6,
+  "total_size_bytes": 11627335,
+  "extensions": [
+    ".avi",
+    ".mkv",
+    ".mov",
+    ".mp4",
+    ".webm"
+  ],
+  "curation_notes": [
+    "Videos con duraciones, resoluciones y orientaciones distintas.",
+    "Archivos pensados para probar metadata, thumbnails, audio y transcodificacion.",
+    "Los videos se mantienen fuera de Git; este manifest documenta contenido y hashes."
+  ],
+  "duplicate_groups": [],
+  "files": [
+    {
+      "file": "curated_01_short_360p.mp4",
+      "relative_path": "dataset/curated_01_short_360p.mp4",
+      "extension": ".mp4",
+      "size_bytes": 329051,
+      "sha256": "91088512dec725cbec1adf643c2d3824fdcfa417d3ac88876b11258b1a2ab069",
+      "ffprobe": {
+        "available": true,
+        "error": null
+      },
+      "recommended_operations": [
+        "extract_metadata",
+        "generate_thumbnail",
+        "extract_audio",
+        "transcode_h264"
+      ],
+      "duration_seconds": 5.0,
+      "container_format": "mov,mp4,m4a,3gp,3g2,mj2",
+      "bit_rate": 526481,
+      "video": {
+        "codec": "h264",
+        "width": 640,
+        "height": 360,
+        "frame_rate": 24.0
+      },
+      "audio": {
+        "codec": "aac",
+        "sample_rate": 44100,
+        "channels": 1
+      }
+    },
+    {
+      "file": "curated_02_medium_480p.mp4",
+      "relative_path": "dataset/curated_02_medium_480p.mp4",
+      "extension": ".mp4",
+      "size_bytes": 800070,
+      "sha256": "773ffca7d97d7708bbbd1529e8e42897c29426e7da338be793379a1b0685a9c0",
+      "ffprobe": {
+        "available": true,
+        "error": null
+      },
+      "recommended_operations": [
+        "extract_metadata",
+        "generate_thumbnail",
+        "extract_audio",
+        "transcode_h264"
+      ],
+      "duration_seconds": 8.0,
+      "container_format": "mov,mp4,m4a,3gp,3g2,mj2",
+      "bit_rate": 800070,
+      "video": {
+        "codec": "h264",
+        "width": 854,
+        "height": 480,
+        "frame_rate": 24.0
+      },
+      "audio": {
+        "codec": "aac",
+        "sample_rate": 44100,
+        "channels": 1
+      }
+    },
+    {
+      "file": "curated_03_hd_720p.mp4",
+      "relative_path": "dataset/curated_03_hd_720p.mp4",
+      "extension": ".mp4",
+      "size_bytes": 3317840,
+      "sha256": "597038ad0459ef49048564036798cc7103139bb60e2e167ba6cab330e557f4e5",
+      "ffprobe": {
+        "available": true,
+        "error": null
+      },
+      "recommended_operations": [
+        "extract_metadata",
+        "generate_thumbnail",
+        "extract_audio",
+        "transcode_h264"
+      ],
+      "duration_seconds": 12.0,
+      "container_format": "mov,mp4,m4a,3gp,3g2,mj2",
+      "bit_rate": 2211893,
+      "video": {
+        "codec": "h264",
+        "width": 1280,
+        "height": 720,
+        "frame_rate": 30.0
+      },
+      "audio": {
+        "codec": "aac",
+        "sample_rate": 44100,
+        "channels": 1
+      }
+    },
+    {
+      "file": "curated_04_long_360p.mp4",
+      "relative_path": "dataset/curated_04_long_360p.mp4",
+      "extension": ".mp4",
+      "size_bytes": 1743071,
+      "sha256": "de8654200cc326aa056737e741337a7f75185ae29676af2d2b802dd220576b71",
+      "ffprobe": {
+        "available": true,
+        "error": null
+      },
+      "recommended_operations": [
+        "extract_metadata",
+        "generate_thumbnail",
+        "extract_audio",
+        "transcode_h264"
+      ],
+      "duration_seconds": 18.0,
+      "container_format": "mov,mp4,m4a,3gp,3g2,mj2",
+      "bit_rate": 774698,
+      "video": {
+        "codec": "h264",
+        "width": 640,
+        "height": 360,
+        "frame_rate": 30.0
+      },
+      "audio": {
+        "codec": "aac",
+        "sample_rate": 44100,
+        "channels": 1
+      }
+    },
+    {
+      "file": "curated_05_vertical_720p.mp4",
+      "relative_path": "dataset/curated_05_vertical_720p.mp4",
+      "extension": ".mp4",
+      "size_bytes": 2343223,
+      "sha256": "4e336c65f034e27eaf62f0fcf075748e2ad77cdd76bc27b609a1731a173b3cd0",
+      "ffprobe": {
+        "available": true,
+        "error": null
+      },
+      "recommended_operations": [
+        "extract_metadata",
+        "generate_thumbnail",
+        "extract_audio",
+        "transcode_h264"
+      ],
+      "duration_seconds": 10.0,
+      "container_format": "mov,mp4,m4a,3gp,3g2,mj2",
+      "bit_rate": 1874578,
+      "video": {
+        "codec": "h264",
+        "width": 720,
+        "height": 1280,
+        "frame_rate": 24.0
+      },
+      "audio": {
+        "codec": "aac",
+        "sample_rate": 44100,
+        "channels": 1
+      }
+    },
+    {
+      "file": "curated_06_high_motion_576p.mp4",
+      "relative_path": "dataset/curated_06_high_motion_576p.mp4",
+      "extension": ".mp4",
+      "size_bytes": 3094080,
+      "sha256": "09055d393ef4ac7e432500cc7be375454193d3a70059f07f58d4cce2abebbdc3",
+      "ffprobe": {
+        "available": true,
+        "error": null
+      },
+      "recommended_operations": [
+        "extract_metadata",
+        "generate_thumbnail",
+        "extract_audio",
+        "transcode_h264"
+      ],
+      "duration_seconds": 15.0,
+      "container_format": "mov,mp4,m4a,3gp,3g2,mj2",
+      "bit_rate": 1650176,
+      "video": {
+        "codec": "h264",
+        "width": 1024,
+        "height": 576,
+        "frame_rate": 30.0
+      },
+      "audio": {
+        "codec": "aac",
+        "sample_rate": 44100,
+        "channels": 1
+      }
+    }
+  ]
+}

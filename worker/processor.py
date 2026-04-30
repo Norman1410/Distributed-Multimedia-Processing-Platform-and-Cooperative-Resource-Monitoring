@@ -5,13 +5,50 @@ import subprocess
 from pathlib import Path
 
 import psutil
+from rq import get_current_job
 
 from shared.operations import SUPPORTED_OPERATIONS, normalize_operation_name
 from shared.job_store import JobStore
 
 
 RESULTS_DIR = Path(os.getenv("RESULTS_DIR", "results"))
+PROCESS_TIMEOUT_SECONDS = float(
+    os.getenv(
+        "WORKER_PROCESS_TIMEOUT_SECONDS",
+        os.getenv("JOB_TIMEOUT_SECONDS", "240"),
+    )
+)
 job_store = JobStore()
+
+
+class ProcessingError(Exception):
+    error_type = "processing_error"
+    retryable = False
+
+
+class InputFileNotFoundError(ProcessingError):
+    error_type = "input_file_not_found"
+    retryable = False
+
+
+class UnsupportedOperationError(ProcessingError):
+    error_type = "unsupported_operation"
+    retryable = False
+
+
+class ToolUnavailableError(ProcessingError):
+    error_type = "tool_unavailable"
+    retryable = False
+
+
+class CommandTimeoutError(ProcessingError):
+    error_type = "operation_timeout"
+    retryable = True
+
+
+class MultimediaCommandError(ProcessingError):
+    error_type = "multimedia_processing_error"
+    retryable = False
 
 
 def _resolve_input_path(file_path: str) -> Path:
@@ -32,20 +69,22 @@ def _build_result_path(job_id: str, operation: str) -> Path:
 def _ensure_supported_operation(operation: str) -> None:
     if operation not in SUPPORTED_OPERATIONS:
         supported = ", ".join(sorted(SUPPORTED_OPERATIONS))
-        raise ValueError(f"unsupported_operation: {operation}. supported_operations: {supported}")
+        raise UnsupportedOperationError(
+            f"unsupported_operation: {operation}. supported_operations: {supported}"
+        )
 
 
 def _resolve_ffmpeg_path() -> str:
     ffmpeg_path = shutil.which("ffmpeg")
     if ffmpeg_path is None:
-        raise RuntimeError("ffmpeg_not_available")
+        raise ToolUnavailableError("ffmpeg_not_available")
     return ffmpeg_path
 
 
 def _resolve_ffprobe_path() -> str:
     ffprobe_path = shutil.which("ffprobe")
     if ffprobe_path is None:
-        raise RuntimeError("ffprobe_not_available")
+        raise ToolUnavailableError("ffprobe_not_available")
     return ffprobe_path
 
 
@@ -55,15 +94,21 @@ def _run_command(command: list[str], error_prefix: str) -> None:
         for item in command
         if item is not None
     ]
-    completed = subprocess.run(
-        command,
-        check=False,
-        capture_output=True,
-        text=True,
-    )
+    try:
+        completed = subprocess.run(
+            command,
+            check=False,
+            capture_output=True,
+            text=True,
+            timeout=PROCESS_TIMEOUT_SECONDS,
+        )
+    except subprocess.TimeoutExpired as exc:
+        raise CommandTimeoutError(
+            f"{error_prefix}_timeout_after_{PROCESS_TIMEOUT_SECONDS:g}s"
+        ) from exc
     if completed.returncode != 0:
         stderr_output = (completed.stderr or "").strip()
-        raise RuntimeError(f"{error_prefix}: {stderr_output}")
+        raise MultimediaCommandError(f"{error_prefix}: {stderr_output}")
 
 
 def _extract_audio(input_path: Path, output_path: Path) -> None:
@@ -133,15 +178,21 @@ def _extract_metadata(input_path: Path, output_path: Path) -> None:
         "-show_streams",
         str(input_path),
     ]
-    completed = subprocess.run(
-        command,
-        check=False,
-        capture_output=True,
-        text=True,
-    )
+    try:
+        completed = subprocess.run(
+            command,
+            check=False,
+            capture_output=True,
+            text=True,
+            timeout=PROCESS_TIMEOUT_SECONDS,
+        )
+    except subprocess.TimeoutExpired as exc:
+        raise CommandTimeoutError(
+            f"ffprobe_extract_metadata_timeout_after_{PROCESS_TIMEOUT_SECONDS:g}s"
+        ) from exc
     if completed.returncode != 0:
         stderr_output = (completed.stderr or "").strip()
-        raise RuntimeError(f"ffprobe_extract_metadata_failed: {stderr_output}")
+        raise MultimediaCommandError(f"ffprobe_extract_metadata_failed: {stderr_output}")
     output_path.write_text(completed.stdout or "{}", encoding="utf-8")
 
 
@@ -155,19 +206,34 @@ def _execute_operation(operation: str, input_path: Path, output_path: Path) -> N
     handlers[operation](input_path, output_path)
 
 
+def _classify_exception(exc: Exception) -> tuple[str, bool, str]:
+    if isinstance(exc, ProcessingError):
+        return exc.error_type, exc.retryable, str(exc)
+    return "unexpected_worker_error", True, str(exc)
+
+
+def _get_retries_left() -> int:
+    current_job = get_current_job()
+    if current_job is None:
+        return 0
+    value = getattr(current_job, "retries_left", 0)
+    try:
+        return int(value or 0)
+    except (TypeError, ValueError):
+        return 0
+
+
 def process_task(job_id, file_path, operation):
     operation = normalize_operation_name(operation)
     worker_id = os.getenv("WORKER_ID") or socket.gethostname()
     worker_hostname = socket.gethostname()
     input_path = _resolve_input_path(file_path)
 
-    if not input_path.exists():
-        message = f"input_file_not_found: {input_path}"
-        job_store.mark_job_failed(job_id, message)
-        raise FileNotFoundError(message)
-
     try:
         _ensure_supported_operation(operation)
+        if not input_path.exists():
+            raise InputFileNotFoundError(f"input_file_not_found: {input_path}")
+
         job_store.upsert_worker_node(
             worker_id,
             hostname=worker_hostname,
@@ -177,12 +243,10 @@ def process_task(job_id, file_path, operation):
             cpu_percent=psutil.cpu_percent(interval=None),
             memory_percent=psutil.virtual_memory().percent,
         )
-        job_store.update_job_status(
+        job_store.start_job_attempt(
             job_id=job_id,
-            status="running",
             worker_id=worker_id,
             progress=10,
-            event_type="job_started",
             payload={"input_path": str(input_path), "operation": operation},
         )
 
@@ -232,17 +296,44 @@ def process_task(job_id, file_path, operation):
             clear_current_job=True,
         )
     except Exception as exc:
-        message = str(exc)
-        job_store.mark_job_failed(job_id, message)
+        error_type, retryable, message = _classify_exception(exc)
+        retries_left = _get_retries_left()
+        if retryable and retries_left > 0:
+            job_store.mark_job_retry_scheduled(
+                job_id,
+                message,
+                error_type=error_type,
+                worker_id=worker_id,
+                retries_left=retries_left,
+            )
+        else:
+            job_store.mark_job_failed(
+                job_id,
+                message,
+                error_type=error_type,
+                retryable=retryable,
+                worker_id=worker_id,
+            )
+
         job_store.upsert_worker_node(
             worker_id,
             hostname=worker_hostname,
-            status="error",
+            status="ready",
             cpu_percent=psutil.cpu_percent(interval=None),
             memory_percent=psutil.virtual_memory().percent,
             clear_current_job=True,
         )
-        raise
+        if retryable:
+            raise
+        return {
+            "job_id": job_id,
+            "source_file": str(input_path),
+            "operation": operation,
+            "worker_id": worker_id,
+            "status": "failed",
+            "error_type": error_type,
+            "error_message": message,
+        }
 
     return {
         "job_id": job_id,

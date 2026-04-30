@@ -9,3 +9,4 @@ results/*
 !results/.gitkeep
 dataset/*
 !dataset/.gitkeep
+!dataset/dataset_metadata.json
