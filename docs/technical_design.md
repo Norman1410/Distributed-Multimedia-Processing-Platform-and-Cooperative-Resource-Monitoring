@@ -7,6 +7,7 @@ Este documento cierra la primera iteracion de diseno tecnico para el sistema:
 - contratos API del coordinador
 - estrategia de balanceo inicial
 - modelo de datos persistente para jobs, resultados y eventos
+- operaciones multimedia soportadas en workers
 
 ## 1) Arquitectura propuesta
 
@@ -75,6 +76,13 @@ Reglas:
 }
 ```
 
+Operaciones permitidas:
+
+- `extract_audio`
+- `generate_thumbnail`
+- `transcode_h264`
+- `extract_metadata`
+
 - Respuesta `201`:
 
 ```json
@@ -129,11 +137,25 @@ Evolucion planificada (sin implementar aun):
 - politica de asignacion basada en carga reportada por worker
 - backoff/retry controlado por tipo de error
 
-## 5) Modelo de datos persistente
+## 5) Operaciones multimedia en worker
+
+Operaciones disponibles:
+
+- `extract_audio`: genera `*.mp3`.
+- `generate_thumbnail`: genera `*.jpg`.
+- `transcode_h264`: genera `*.mp4` (H.264/AAC).
+- `extract_metadata`: genera `*.json` (salida de `ffprobe`).
+
+Regla de salida:
+
+- el resultado queda en `results/{job_id}_{operation}.{ext}`.
+- `job_results.metadata_json` guarda metadatos de salida (`extension`, `size`, `worker_id`, etc).
+
+## 6) Modelo de datos persistente
 
 Motor: SQLite (`COORDINATOR_DB_PATH`, default `results/coordinator.db`).
 
-### 5.1 Tabla `jobs`
+### 6.1 Tabla `jobs`
 
 Campos clave:
 
@@ -151,7 +173,7 @@ Uso:
 - fuente de verdad del estado actual de cada trabajo
 - consulta para dashboard y cliente
 
-### 5.2 Tabla `job_events`
+### 6.2 Tabla `job_events`
 
 Campos clave:
 
@@ -167,7 +189,7 @@ Uso:
 - trazabilidad completa de transiciones y eventos del job
 - base para auditoria y diagnostico
 
-### 5.3 Tabla `job_results`
+### 6.3 Tabla `job_results`
 
 Campos clave:
 
@@ -181,12 +203,12 @@ Uso:
 - catalogo persistente de resultados por trabajo
 - soporte para descarga/consulta posterior
 
-### 5.4 Indices
+### 6.4 Indices
 
 - `idx_jobs_status` sobre `jobs(status)`
 - `idx_job_events_job_id` sobre `job_events(job_id)`
 
-## 6) Generacion automatica de tareas (batch)
+## 7) Generacion automatica de tareas (batch)
 
 Se agrega un cliente de carga automatica en `scripts/generate_batch_jobs.py` que:
 
@@ -195,7 +217,7 @@ Se agrega un cliente de carga automatica en `scripts/generate_batch_jobs.py` que
 - permite repetir cada archivo con `--repeat` para pruebas de carga
 - permite overrides por archivo con `--metadata-json` (prioridad y operacion)
 
-## 7) Criterios de aceptacion para estas 2 tareas
+## 8) Criterios de aceptacion para estas 2 tareas
 
 - Existe documento tecnico con arquitectura, estados, API y balanceo.
 - El coordinador ya no usa almacenamiento en memoria para estado de jobs.

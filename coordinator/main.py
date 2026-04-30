@@ -23,6 +23,12 @@ from coordinator.queue_manager import (
     get_queue_for_priority,
     resolve_queue_name_for_priority,
 )
+from shared.operations import (
+    OPERATION_DESCRIPTIONS,
+    SUPPORTED_OPERATIONS,
+    is_supported_operation,
+    normalize_operation_name,
+)
 from shared.job_store import JobStore, VALID_JOB_STATUSES
 
 
@@ -97,6 +103,7 @@ def root():
     return {
         "message": "Coordinador funcionando",
         "queue_priority_order": QUEUE_PRIORITY_ORDER,
+        "supported_operations": SUPPORTED_OPERATIONS,
     }
 
 
@@ -109,6 +116,19 @@ def monitor_summary():
 @app.get("/monitor/dataset-files")
 def monitor_dataset_files():
     return {"files": list_dataset_files()}
+
+
+@app.get("/monitor/operations")
+def monitor_operations():
+    return {
+        "operations": [
+            {
+                "operation": operation,
+                "description": OPERATION_DESCRIPTIONS.get(operation, ""),
+            }
+            for operation in SUPPORTED_OPERATIONS
+        ]
+    }
 
 
 @app.get("/dashboard", response_class=HTMLResponse)
@@ -124,11 +144,18 @@ def dashboard(request: Request):
 
 @app.post("/jobs", response_model=JobResponse, status_code=201)
 def create_job(job: JobRequest):
+    normalized_operation = normalize_operation_name(job.operation)
+    if not is_supported_operation(normalized_operation):
+        raise HTTPException(
+            status_code=422,
+            detail=f"operation debe ser una de: {list(SUPPORTED_OPERATIONS)}",
+        )
+
     job_id = str(uuid.uuid4())
     job_store.create_job(
         job_id=job_id,
         file_path=job.file_path,
-        operation=job.operation,
+        operation=normalized_operation,
         priority=job.priority,
     )
 
@@ -140,7 +167,7 @@ def create_job(job: JobRequest):
             "worker.processor.process_task",
             job_id,
             job.file_path,
-            job.operation,
+            normalized_operation,
         )
     except Exception as exc:
         job_store.mark_job_failed(job_id, f"queue_enqueue_error: {exc}")

@@ -2,11 +2,12 @@
   "files": [
     {
       "file": "sample-5s.mp4",
-      "operation": "extract_audio",
+      "operation": "generate_thumbnail",
       "priority": 2
     },
     {
       "file": "video_largo.mp4",
+      "operation": "transcode_h264",
       "priority": 8
     }
   ]

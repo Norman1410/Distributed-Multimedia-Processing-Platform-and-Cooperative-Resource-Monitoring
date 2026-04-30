@@ -408,6 +408,7 @@
     const refreshIntervalMs = 3000;
     const form = document.getElementById("job-form");
     const filePathSelect = document.getElementById("file-path");
+    const operationSelect = document.getElementById("operation");
     const priorityInput = document.getElementById("priority");
     const submitButton = document.getElementById("submit-button");
     const flash = document.getElementById("flash");
@@ -509,6 +510,18 @@
       }
     }
 
+    async function loadOperations() {
+      const response = await fetch("/monitor/operations");
+      if (!response.ok) throw new Error("No fue posible cargar operaciones disponibles.");
+      const payload = await response.json();
+      operationSelect.innerHTML = payload.operations.map(item => `
+        <option value="${item.operation}">${item.operation} - ${item.description}</option>
+      `).join("");
+      if (!payload.operations.length) {
+        operationSelect.innerHTML = `<option value="">No hay operaciones disponibles</option>`;
+      }
+    }
+
     async function refreshAll() {
       try {
         await loadSummary();
@@ -557,6 +570,7 @@
     async function bootstrap() {
       try {
         await loadDatasetFiles();
+        await loadOperations();
         await refreshAll();
         setFlash("Dashboard listo para crear y observar jobs.", "ok");
       } catch (error) {

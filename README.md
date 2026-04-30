@@ -65,9 +65,13 @@ Notas:
 
 - Los resultados y la base SQLite se guardan en `results/`.
 - El dataset de prueba se monta desde `dataset/`.
-- La operacion implementada de forma real es `extract_audio`, usando `ffmpeg` dentro del worker.
+- Las operaciones implementadas usan `ffmpeg/ffprobe` dentro del worker:
+  - `extract_audio`: video -> `.mp3`
+  - `generate_thumbnail`: video -> `.jpg`
+  - `transcode_h264`: video -> `.mp4` (H.264 + AAC)
+  - `extract_metadata`: archivo -> `.json` con metadatos tecnicos
 - Para una prueba exitosa necesitas colocar en `dataset/` un video real con pista de audio; `dataset/demo.mp4` solo sirve como placeholder de estructura.
-- El resultado esperado de `extract_audio` es un archivo `.mp3` guardado en `results/`.
+- Los resultados quedan guardados en `results/` con prefijo `{job_id}_{operation}`.
 - El `docker-compose` levanta tres workers (`worker-1`, `worker-2`, `worker-3`) para evidenciar distribucion real de jobs.
 - La prioridad ahora es real con colas separadas:
   - prioridad `1..3` -> `jobs_high`
@@ -116,6 +120,7 @@ Para validar esta fase:
 
    Desde esta vista ahora puedes:
    - seleccionar un archivo real del `dataset`
+   - elegir la operacion (`extract_audio`, `generate_thumbnail`, `transcode_h264`, `extract_metadata`)
    - elegir la prioridad del job
    - crear el job sin usar la terminal
    - observar el tablero con refresco automatico cada 3 segundos
