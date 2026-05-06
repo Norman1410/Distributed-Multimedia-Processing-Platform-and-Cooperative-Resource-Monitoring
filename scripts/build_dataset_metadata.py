@@ -10,7 +10,9 @@ from pathlib import Path
 from typing import Any
 
 
-DEFAULT_EXTENSIONS = {".mp4", ".mkv", ".mov", ".avi", ".webm"}
+VIDEO_EXTENSIONS = {".mp4", ".mkv", ".mov", ".avi", ".webm"}
+AUDIO_EXTENSIONS = {".wav", ".mp3", ".flac", ".aac", ".m4a", ".ogg"}
+DEFAULT_EXTENSIONS = VIDEO_EXTENSIONS | AUDIO_EXTENSIONS
 
 
 def parse_args() -> argparse.Namespace:
@@ -141,6 +143,27 @@ def discover_files(dataset_dir: Path, ext_set: set[str]) -> list[Path]:
     ]
 
 
+def media_type_for_extension(extension: str) -> str:
+    if extension in VIDEO_EXTENSIONS:
+        return "video"
+    if extension in AUDIO_EXTENSIONS:
+        return "audio"
+    return "unknown"
+
+
+def recommended_operations_for_media(media_type: str) -> list[str]:
+    if media_type == "video":
+        return [
+            "extract_metadata",
+            "generate_thumbnail",
+            "extract_audio",
+            "transcode_h264",
+        ]
+    if media_type == "audio":
+        return ["extract_metadata"]
+    return ["extract_metadata"]
+
+
 def main() -> int:
     args = parse_args()
     dataset_dir = Path(args.dataset_dir).expanduser().resolve()
@@ -157,22 +180,20 @@ def main() -> int:
         digest = sha256_file(path)
         hashes.setdefault(digest, []).append(path.name)
         probe = run_ffprobe(path, args.ffprobe_timeout_seconds)
+        extension = path.suffix.lower()
+        media_type = media_type_for_extension(extension)
         entry: dict[str, Any] = {
             "file": path.name,
             "relative_path": f"dataset/{path.name}",
-            "extension": path.suffix.lower(),
+            "media_type": media_type,
+            "extension": extension,
             "size_bytes": path.stat().st_size,
             "sha256": digest,
             "ffprobe": {
                 "available": probe.get("available", False),
                 "error": probe.get("error"),
             },
-            "recommended_operations": [
-                "extract_metadata",
-                "generate_thumbnail",
-                "extract_audio",
-                "transcode_h264",
-            ],
+            "recommended_operations": recommended_operations_for_media(media_type),
         }
         entry.update(summarize_streams(probe))
         entries.append(entry)
@@ -183,18 +204,25 @@ def main() -> int:
         if len(names) > 1
     ]
     total_size = sum(item["size_bytes"] for item in entries)
+    media_counts = {
+        "audio": sum(1 for item in entries if item["media_type"] == "audio"),
+        "video": sum(1 for item in entries if item["media_type"] == "video"),
+        "unknown": sum(1 for item in entries if item["media_type"] == "unknown"),
+    }
     manifest = {
-        "dataset_name": "curated_multimedia_load_dataset",
-        "version": "2026-04-29",
+        "dataset_name": "curated_multimedia_real_dataset_400",
+        "version": "2026-05-05",
         "generated_at": datetime.now(timezone.utc).isoformat(),
         "dataset_dir": "dataset",
         "total_files": len(entries),
+        "selected_real_videos": media_counts["video"],
+        "selected_real_audio": media_counts["audio"],
         "total_size_bytes": total_size,
         "extensions": sorted(ext_set),
         "curation_notes": [
-            "Videos con duraciones, resoluciones y orientaciones distintas.",
-            "Archivos pensados para probar metadata, thumbnails, audio y transcodificacion.",
-            "Los videos se mantienen fuera de Git; este manifest documenta contenido y hashes.",
+            "Dataset curado con archivos reales de audio y video para pruebas de carga distribuida.",
+            "Los audios se usan para extraccion de metadatos; los videos permiten metadata, thumbnails, audio y transcodificacion.",
+            "El manifest documenta nombres, tamanos, hashes SHA-256 y metadatos tecnicos obtenidos con ffprobe.",
         ],
         "duplicate_groups": duplicate_groups,
         "files": entries,

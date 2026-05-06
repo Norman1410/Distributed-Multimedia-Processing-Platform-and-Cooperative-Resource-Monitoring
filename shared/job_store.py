@@ -3,10 +3,11 @@ from __future__ import annotations
 import json
 import os
 import sqlite3
+import time
 from contextlib import contextmanager
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any, Dict, List, Optional
+from typing import Any, Callable, Dict, List, Optional, TypeVar
 
 
 VALID_JOB_STATUSES = {
@@ -17,6 +18,12 @@ VALID_JOB_STATUSES = {
     "completed",
     "failed",
 }
+
+SQLITE_TIMEOUT_SECONDS = int(os.getenv("SQLITE_TIMEOUT_SECONDS", "120"))
+SQLITE_BUSY_TIMEOUT_MS = int(os.getenv("SQLITE_BUSY_TIMEOUT_MS", "120000"))
+SQLITE_LOCK_RETRIES = int(os.getenv("SQLITE_LOCK_RETRIES", "10"))
+
+T = TypeVar("T")
 
 
 def utc_now_iso() -> str:
@@ -36,95 +43,124 @@ class JobStore:
         db_parent = Path(self.db_path).expanduser().resolve().parent
         db_parent.mkdir(parents=True, exist_ok=True)
 
+    @staticmethod
+    def _is_locked_error(exc: sqlite3.OperationalError) -> bool:
+        message = str(exc).lower()
+        return "database is locked" in message or "database table is locked" in message
+
+    def _run_with_locked_retry(self, operation: Callable[[], T]) -> T:
+        for attempt in range(SQLITE_LOCK_RETRIES + 1):
+            try:
+                return operation()
+            except sqlite3.OperationalError as exc:
+                if not self._is_locked_error(exc) or attempt >= SQLITE_LOCK_RETRIES:
+                    raise
+                time.sleep(min(0.1 * (2**attempt), 2.0))
+        raise RuntimeError("sqlite_retry_loop_exhausted")
+
     @contextmanager
-    def _connection(self):
-        conn = sqlite3.connect(self.db_path, timeout=30, check_same_thread=False)
+    def _connection(self, *, configure_wal: bool = False):
+        conn = sqlite3.connect(
+            self.db_path,
+            timeout=SQLITE_TIMEOUT_SECONDS,
+            check_same_thread=False,
+        )
         conn.row_factory = sqlite3.Row
+        conn.execute(f"PRAGMA busy_timeout = {SQLITE_BUSY_TIMEOUT_MS};")
         conn.execute("PRAGMA foreign_keys = ON;")
+        conn.execute("PRAGMA synchronous = NORMAL;")
+        if configure_wal:
+            conn.execute("PRAGMA journal_mode = WAL;")
         try:
             yield conn
             conn.commit()
+        except Exception:
+            conn.rollback()
+            raise
         finally:
             conn.close()
 
     def init_db(self) -> None:
-        with self._connection() as conn:
-            conn.execute(
-                """
-                CREATE TABLE IF NOT EXISTS jobs (
-                    job_id TEXT PRIMARY KEY,
-                    file_path TEXT NOT NULL,
-                    operation TEXT NOT NULL,
-                    priority INTEGER NOT NULL DEFAULT 5,
-                    status TEXT NOT NULL,
-                    worker_id TEXT,
-                    progress REAL NOT NULL DEFAULT 0,
-                    queue_name TEXT,
-                    rq_job_id TEXT,
-                    attempt_count INTEGER NOT NULL DEFAULT 0,
-                    max_attempts INTEGER NOT NULL DEFAULT 1,
-                    result_path TEXT,
-                    error_message TEXT,
-                    error_type TEXT,
-                    retryable INTEGER NOT NULL DEFAULT 0,
-                    created_at TEXT NOT NULL,
-                    queued_at TEXT,
-                    started_at TEXT,
-                    finished_at TEXT,
-                    updated_at TEXT NOT NULL
-                );
-                """
-            )
-            conn.execute(
-                """
-                CREATE TABLE IF NOT EXISTS job_results (
-                    job_id TEXT PRIMARY KEY,
-                    output_location TEXT,
-                    metadata_json TEXT,
-                    created_at TEXT NOT NULL,
-                    FOREIGN KEY(job_id) REFERENCES jobs(job_id) ON DELETE CASCADE
-                );
-                """
-            )
-            conn.execute(
-                """
-                CREATE TABLE IF NOT EXISTS job_events (
-                    event_id INTEGER PRIMARY KEY AUTOINCREMENT,
-                    job_id TEXT NOT NULL,
-                    event_type TEXT NOT NULL,
-                    status TEXT,
-                    payload_json TEXT,
-                    created_at TEXT NOT NULL,
-                    FOREIGN KEY(job_id) REFERENCES jobs(job_id) ON DELETE CASCADE
-                );
-                """
-            )
-            conn.execute(
-                """
-                CREATE TABLE IF NOT EXISTS worker_nodes (
-                    worker_id TEXT PRIMARY KEY,
-                    hostname TEXT,
-                    status TEXT NOT NULL DEFAULT 'unknown',
-                    current_job_id TEXT,
-                    current_operation TEXT,
-                    cpu_percent REAL,
-                    memory_percent REAL,
-                    started_at TEXT NOT NULL,
-                    last_seen TEXT NOT NULL,
-                    updated_at TEXT NOT NULL
-                );
-                """
-            )
-            conn.execute(
-                "CREATE INDEX IF NOT EXISTS idx_jobs_status ON jobs(status);"
-            )
-            conn.execute(
-                "CREATE INDEX IF NOT EXISTS idx_job_events_job_id ON job_events(job_id);"
-            )
-            conn.execute(
-                "CREATE INDEX IF NOT EXISTS idx_worker_nodes_last_seen ON worker_nodes(last_seen);"
-            )
-            self._ensure_jobs_columns(conn)
+        def write_schema() -> None:
+            with self._connection(configure_wal=True) as conn:
+                conn.execute(
+                    """
+                    CREATE TABLE IF NOT EXISTS jobs (
+                        job_id TEXT PRIMARY KEY,
+                        file_path TEXT NOT NULL,
+                        operation TEXT NOT NULL,
+                        priority INTEGER NOT NULL DEFAULT 5,
+                        status TEXT NOT NULL,
+                        worker_id TEXT,
+                        progress REAL NOT NULL DEFAULT 0,
+                        queue_name TEXT,
+                        rq_job_id TEXT,
+                        attempt_count INTEGER NOT NULL DEFAULT 0,
+                        max_attempts INTEGER NOT NULL DEFAULT 1,
+                        result_path TEXT,
+                        error_message TEXT,
+                        error_type TEXT,
+                        retryable INTEGER NOT NULL DEFAULT 0,
+                        created_at TEXT NOT NULL,
+                        queued_at TEXT,
+                        started_at TEXT,
+                        finished_at TEXT,
+                        updated_at TEXT NOT NULL
+                    );
+                    """
+                )
+                conn.execute(
+                    """
+                    CREATE TABLE IF NOT EXISTS job_results (
+                        job_id TEXT PRIMARY KEY,
+                        output_location TEXT,
+                        metadata_json TEXT,
+                        created_at TEXT NOT NULL,
+                        FOREIGN KEY(job_id) REFERENCES jobs(job_id) ON DELETE CASCADE
+                    );
+                    """
+                )
+                conn.execute(
+                    """
+                    CREATE TABLE IF NOT EXISTS job_events (
+                        event_id INTEGER PRIMARY KEY AUTOINCREMENT,
+                        job_id TEXT NOT NULL,
+                        event_type TEXT NOT NULL,
+                        status TEXT,
+                        payload_json TEXT,
+                        created_at TEXT NOT NULL,
+                        FOREIGN KEY(job_id) REFERENCES jobs(job_id) ON DELETE CASCADE
+                    );
+                    """
+                )
+                conn.execute(
+                    """
+                    CREATE TABLE IF NOT EXISTS worker_nodes (
+                        worker_id TEXT PRIMARY KEY,
+                        hostname TEXT,
+                        status TEXT NOT NULL DEFAULT 'unknown',
+                        current_job_id TEXT,
+                        current_operation TEXT,
+                        cpu_percent REAL,
+                        memory_percent REAL,
+                        started_at TEXT NOT NULL,
+                        last_seen TEXT NOT NULL,
+                        updated_at TEXT NOT NULL
+                    );
+                    """
+                )
+                conn.execute(
+                    "CREATE INDEX IF NOT EXISTS idx_jobs_status ON jobs(status);"
+                )
+                conn.execute(
+                    "CREATE INDEX IF NOT EXISTS idx_job_events_job_id ON job_events(job_id);"
+                )
+                conn.execute(
+                    "CREATE INDEX IF NOT EXISTS idx_worker_nodes_last_seen ON worker_nodes(last_seen);"
+                )
+                self._ensure_jobs_columns(conn)
+
+        self._run_with_locked_retry(write_schema)
 
     def _ensure_jobs_columns(self, conn: sqlite3.Connection) -> None:
         existing_columns = {
@@ -154,36 +190,40 @@ class JobStore:
         max_attempts: int = 1,
     ) -> Dict[str, Any]:
         now = utc_now_iso()
-        with self._connection() as conn:
-            conn.execute(
-                """
-                INSERT INTO jobs (
-                    job_id, file_path, operation, priority, status, progress,
-                    attempt_count, max_attempts, retryable,
-                    created_at, updated_at
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?);
-                """,
-                (
-                    job_id,
-                    file_path,
-                    operation,
-                    priority,
-                    "pending",
-                    0,
-                    0,
-                    max(max_attempts, 1),
-                    0,
-                    now,
-                    now,
-                ),
-            )
-            self._add_event_with_conn(
-                conn,
-                job_id=job_id,
-                event_type="job_created",
-                status="pending",
-                payload={"priority": priority, "max_attempts": max(max_attempts, 1)},
-            )
+
+        def write_job() -> None:
+            with self._connection() as conn:
+                conn.execute(
+                    """
+                    INSERT INTO jobs (
+                        job_id, file_path, operation, priority, status, progress,
+                        attempt_count, max_attempts, retryable,
+                        created_at, updated_at
+                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?);
+                    """,
+                    (
+                        job_id,
+                        file_path,
+                        operation,
+                        priority,
+                        "pending",
+                        0,
+                        0,
+                        max(max_attempts, 1),
+                        0,
+                        now,
+                        now,
+                    ),
+                )
+                self._add_event_with_conn(
+                    conn,
+                    job_id=job_id,
+                    event_type="job_created",
+                    status="pending",
+                    payload={"priority": priority, "max_attempts": max(max_attempts, 1)},
+                )
+
+        self._run_with_locked_retry(write_job)
         return self.get_job(job_id)  # type: ignore[return-value]
 
     def mark_job_queued(
@@ -193,24 +233,30 @@ class JobStore:
         rq_job_id: Optional[str] = None,
     ) -> Optional[Dict[str, Any]]:
         now = utc_now_iso()
-        with self._connection() as conn:
-            result = conn.execute(
-                """
-                UPDATE jobs
-                SET status = ?, queue_name = ?, rq_job_id = ?, queued_at = ?, updated_at = ?
-                WHERE job_id = ?;
-                """,
-                ("queued", queue_name, rq_job_id, now, now, job_id),
-            )
-            if result.rowcount == 0:
-                return None
-            self._add_event_with_conn(
-                conn,
-                job_id=job_id,
-                event_type="job_queued",
-                status="queued",
-                payload={"queue_name": queue_name, "rq_job_id": rq_job_id},
-            )
+
+        def write_queued() -> bool:
+            with self._connection() as conn:
+                result = conn.execute(
+                    """
+                    UPDATE jobs
+                    SET status = ?, queue_name = ?, rq_job_id = ?, queued_at = ?, updated_at = ?
+                    WHERE job_id = ?;
+                    """,
+                    ("queued", queue_name, rq_job_id, now, now, job_id),
+                )
+                if result.rowcount == 0:
+                    return False
+                self._add_event_with_conn(
+                    conn,
+                    job_id=job_id,
+                    event_type="job_queued",
+                    status="queued",
+                    payload={"queue_name": queue_name, "rq_job_id": rq_job_id},
+                )
+                return True
+
+        if not self._run_with_locked_retry(write_queued):
+            return None
         return self.get_job(job_id)
 
     def update_job_status(
@@ -260,35 +306,40 @@ class JobStore:
 
         params.append(job_id)
 
-        with self._connection() as conn:
-            query = f"""
-                UPDATE jobs
-                SET {", ".join(assignments)}
-                WHERE job_id = ?;
-            """
-            result = conn.execute(query, params)
-            if result.rowcount == 0:
-                return None
+        def write_status() -> bool:
+            with self._connection() as conn:
+                query = f"""
+                    UPDATE jobs
+                    SET {", ".join(assignments)}
+                    WHERE job_id = ?;
+                """
+                result = conn.execute(query, params)
+                if result.rowcount == 0:
+                    return False
 
-            event_payload = payload or {}
-            if worker_id is not None:
-                event_payload["worker_id"] = worker_id
-            if progress is not None:
-                event_payload["progress"] = progress
-            if error_message is not None:
-                event_payload["error_message"] = error_message
-            if error_type is not None:
-                event_payload["error_type"] = error_type
-            if retryable is not None:
-                event_payload["retryable"] = retryable
+                event_payload = payload or {}
+                if worker_id is not None:
+                    event_payload["worker_id"] = worker_id
+                if progress is not None:
+                    event_payload["progress"] = progress
+                if error_message is not None:
+                    event_payload["error_message"] = error_message
+                if error_type is not None:
+                    event_payload["error_type"] = error_type
+                if retryable is not None:
+                    event_payload["retryable"] = retryable
 
-            self._add_event_with_conn(
-                conn,
-                job_id=job_id,
-                event_type=event_type,
-                status=status,
-                payload=event_payload,
-            )
+                self._add_event_with_conn(
+                    conn,
+                    job_id=job_id,
+                    event_type=event_type,
+                    status=status,
+                    payload=event_payload,
+                )
+                return True
+
+        if not self._run_with_locked_retry(write_status):
+            return None
 
         return self.get_job(job_id)
 
@@ -301,47 +352,52 @@ class JobStore:
         payload: Optional[Dict[str, Any]] = None,
     ) -> Optional[Dict[str, Any]]:
         now = utc_now_iso()
-        with self._connection() as conn:
-            result = conn.execute(
-                """
-                UPDATE jobs
-                SET status = ?,
-                    worker_id = ?,
-                    progress = ?,
-                    attempt_count = attempt_count + 1,
-                    error_message = NULL,
-                    error_type = NULL,
-                    retryable = 0,
-                    started_at = COALESCE(started_at, ?),
-                    updated_at = ?
-                WHERE job_id = ?;
-                """,
-                ("running", worker_id, progress, now, now, job_id),
-            )
-            if result.rowcount == 0:
-                return None
 
-            row = conn.execute(
-                "SELECT attempt_count, max_attempts FROM jobs WHERE job_id = ?;",
-                (job_id,),
-            ).fetchone()
-            event_payload = payload or {}
-            event_payload.update(
-                {
-                    "worker_id": worker_id,
-                    "progress": progress,
-                    "attempt_count": row["attempt_count"],
-                    "max_attempts": row["max_attempts"],
-                }
-            )
-            self._add_event_with_conn(
-                conn,
-                job_id=job_id,
-                event_type="job_started",
-                status="running",
-                payload=event_payload,
-            )
+        def write_started() -> bool:
+            with self._connection() as conn:
+                result = conn.execute(
+                    """
+                    UPDATE jobs
+                    SET status = ?,
+                        worker_id = ?,
+                        progress = ?,
+                        attempt_count = attempt_count + 1,
+                        error_message = NULL,
+                        error_type = NULL,
+                        retryable = 0,
+                        started_at = COALESCE(started_at, ?),
+                        updated_at = ?
+                    WHERE job_id = ?;
+                    """,
+                    ("running", worker_id, progress, now, now, job_id),
+                )
+                if result.rowcount == 0:
+                    return False
 
+                row = conn.execute(
+                    "SELECT attempt_count, max_attempts FROM jobs WHERE job_id = ?;",
+                    (job_id,),
+                ).fetchone()
+                event_payload = payload or {}
+                event_payload.update(
+                    {
+                        "worker_id": worker_id,
+                        "progress": progress,
+                        "attempt_count": row["attempt_count"],
+                        "max_attempts": row["max_attempts"],
+                    }
+                )
+                self._add_event_with_conn(
+                    conn,
+                    job_id=job_id,
+                    event_type="job_started",
+                    status="running",
+                    payload=event_payload,
+                )
+                return True
+
+        if not self._run_with_locked_retry(write_started):
+            return None
         return self.get_job(job_id)
 
     def mark_job_retry_scheduled(
@@ -354,36 +410,42 @@ class JobStore:
         retries_left: Optional[int] = None,
     ) -> Optional[Dict[str, Any]]:
         now = utc_now_iso()
-        with self._connection() as conn:
-            result = conn.execute(
-                """
-                UPDATE jobs
-                SET status = ?,
-                    progress = ?,
-                    worker_id = COALESCE(?, worker_id),
-                    error_message = ?,
-                    error_type = ?,
-                    retryable = ?,
-                    updated_at = ?
-                WHERE job_id = ?;
-                """,
-                ("queued", 0, worker_id, error_message, error_type, 1, now, job_id),
-            )
-            if result.rowcount == 0:
-                return None
-            self._add_event_with_conn(
-                conn,
-                job_id=job_id,
-                event_type="job_retry_scheduled",
-                status="queued",
-                payload={
-                    "error_message": error_message,
-                    "error_type": error_type,
-                    "retryable": True,
-                    "worker_id": worker_id,
-                    "retries_left": retries_left,
-                },
-            )
+
+        def write_retry() -> bool:
+            with self._connection() as conn:
+                result = conn.execute(
+                    """
+                    UPDATE jobs
+                    SET status = ?,
+                        progress = ?,
+                        worker_id = COALESCE(?, worker_id),
+                        error_message = ?,
+                        error_type = ?,
+                        retryable = ?,
+                        updated_at = ?
+                    WHERE job_id = ?;
+                    """,
+                    ("queued", 0, worker_id, error_message, error_type, 1, now, job_id),
+                )
+                if result.rowcount == 0:
+                    return False
+                self._add_event_with_conn(
+                    conn,
+                    job_id=job_id,
+                    event_type="job_retry_scheduled",
+                    status="queued",
+                    payload={
+                        "error_message": error_message,
+                        "error_type": error_type,
+                        "retryable": True,
+                        "worker_id": worker_id,
+                        "retries_left": retries_left,
+                    },
+                )
+                return True
+
+        if not self._run_with_locked_retry(write_retry):
+            return None
         return self.get_job(job_id)
 
     def mark_job_failed(
@@ -418,44 +480,47 @@ class JobStore:
     ) -> Optional[Dict[str, Any]]:
         now = utc_now_iso()
         metadata_json = json.dumps(metadata or {}, ensure_ascii=False)
-        with self._connection() as conn:
-            conn.execute(
-                """
-                INSERT INTO job_results (job_id, output_location, metadata_json, created_at)
-                VALUES (?, ?, ?, ?)
-                ON CONFLICT(job_id)
-                DO UPDATE SET
-                    output_location = excluded.output_location,
-                    metadata_json = excluded.metadata_json,
-                    created_at = excluded.created_at;
-                """,
-                (job_id, output_location, metadata_json, now),
-            )
 
-            conn.execute(
-                """
-                UPDATE jobs
-                SET result_path = ?,
-                    status = ?,
-                    progress = ?,
-                    error_message = NULL,
-                    error_type = NULL,
-                    retryable = 0,
-                    finished_at = ?,
-                    updated_at = ?
-                WHERE job_id = ?;
-                """,
-                (output_location, "completed", 100, now, now, job_id),
-            )
+        def write_result() -> None:
+            with self._connection() as conn:
+                conn.execute(
+                    """
+                    INSERT INTO job_results (job_id, output_location, metadata_json, created_at)
+                    VALUES (?, ?, ?, ?)
+                    ON CONFLICT(job_id)
+                    DO UPDATE SET
+                        output_location = excluded.output_location,
+                        metadata_json = excluded.metadata_json,
+                        created_at = excluded.created_at;
+                    """,
+                    (job_id, output_location, metadata_json, now),
+                )
 
-            self._add_event_with_conn(
-                conn,
-                job_id=job_id,
-                event_type="job_result_recorded",
-                status="completed",
-                payload={"output_location": output_location},
-            )
+                conn.execute(
+                    """
+                    UPDATE jobs
+                    SET result_path = ?,
+                        status = ?,
+                        progress = ?,
+                        error_message = NULL,
+                        error_type = NULL,
+                        retryable = 0,
+                        finished_at = ?,
+                        updated_at = ?
+                    WHERE job_id = ?;
+                    """,
+                    (output_location, "completed", 100, now, now, job_id),
+                )
 
+                self._add_event_with_conn(
+                    conn,
+                    job_id=job_id,
+                    event_type="job_result_recorded",
+                    status="completed",
+                    payload={"output_location": output_location},
+                )
+
+        self._run_with_locked_retry(write_result)
         return self.get_job(job_id)
 
     def add_event(
@@ -465,8 +530,11 @@ class JobStore:
         status: Optional[str] = None,
         payload: Optional[Dict[str, Any]] = None,
     ) -> None:
-        with self._connection() as conn:
-            self._add_event_with_conn(conn, job_id, event_type, status, payload)
+        def write_event() -> None:
+            with self._connection() as conn:
+                self._add_event_with_conn(conn, job_id, event_type, status, payload)
+
+        self._run_with_locked_retry(write_event)
 
     def _add_event_with_conn(
         self,
@@ -487,7 +555,7 @@ class JobStore:
                 status,
                 json.dumps(payload or {}, ensure_ascii=False),
                 utc_now_iso(),
-            ),
+            )
         )
 
     def get_job(self, job_id: str) -> Optional[Dict[str, Any]]:
@@ -576,65 +644,69 @@ class JobStore:
         clear_current_job: bool = False,
     ) -> Optional[Dict[str, Any]]:
         now = utc_now_iso()
-        with self._connection() as conn:
-            conn.execute(
-                """
-                INSERT INTO worker_nodes (
-                    worker_id, hostname, status, current_job_id, current_operation,
-                    cpu_percent, memory_percent, started_at, last_seen, updated_at
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-                ON CONFLICT(worker_id)
-                DO NOTHING;
-                """,
-                (
-                    worker_id,
-                    hostname,
-                    status or "ready",
-                    current_job_id,
-                    current_operation,
-                    cpu_percent,
-                    memory_percent,
-                    now,
-                    now,
-                    now,
-                ),
-            )
 
-            assignments = ["last_seen = ?", "updated_at = ?"]
-            params: List[Any] = [now, now]
+        def write_worker() -> None:
+            with self._connection() as conn:
+                conn.execute(
+                    """
+                    INSERT INTO worker_nodes (
+                        worker_id, hostname, status, current_job_id, current_operation,
+                        cpu_percent, memory_percent, started_at, last_seen, updated_at
+                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    ON CONFLICT(worker_id)
+                    DO NOTHING;
+                    """,
+                    (
+                        worker_id,
+                        hostname,
+                        status or "ready",
+                        current_job_id,
+                        current_operation,
+                        cpu_percent,
+                        memory_percent,
+                        now,
+                        now,
+                        now,
+                    ),
+                )
 
-            if hostname is not None:
-                assignments.append("hostname = ?")
-                params.append(hostname)
-            if status is not None:
-                assignments.append("status = ?")
-                params.append(status)
-            if cpu_percent is not None:
-                assignments.append("cpu_percent = ?")
-                params.append(cpu_percent)
-            if memory_percent is not None:
-                assignments.append("memory_percent = ?")
-                params.append(memory_percent)
-            if clear_current_job:
-                assignments.append("current_job_id = NULL")
-                assignments.append("current_operation = NULL")
-            else:
-                if current_job_id is not None:
-                    assignments.append("current_job_id = ?")
-                    params.append(current_job_id)
-                if current_operation is not None:
-                    assignments.append("current_operation = ?")
-                    params.append(current_operation)
+                assignments = ["last_seen = ?", "updated_at = ?"]
+                params: List[Any] = [now, now]
 
-            params.append(worker_id)
-            conn.execute(
-                f"""
-                UPDATE worker_nodes
-                SET {", ".join(assignments)}
-                WHERE worker_id = ?;
-                """,
-                params,
-            )
+                if hostname is not None:
+                    assignments.append("hostname = ?")
+                    params.append(hostname)
+                if status is not None:
+                    assignments.append("status = ?")
+                    params.append(status)
+                if cpu_percent is not None:
+                    assignments.append("cpu_percent = ?")
+                    params.append(cpu_percent)
+                if memory_percent is not None:
+                    assignments.append("memory_percent = ?")
+                    params.append(memory_percent)
+                if clear_current_job:
+                    assignments.append("current_job_id = NULL")
+                    assignments.append("current_operation = NULL")
+                else:
+                    if current_job_id is not None:
+                        assignments.append("current_job_id = ?")
+                        params.append(current_job_id)
+                    if current_operation is not None:
+                        assignments.append("current_operation = ?")
+                        params.append(current_operation)
+
+                params.append(worker_id)
+                conn.execute(
+                    f"""
+                    UPDATE worker_nodes
+                    SET {", ".join(assignments)}
+                    WHERE worker_id = ?;
+                    """,
+                    params,
+                )
+
+        self._run_with_locked_retry(write_worker)
         return self.get_worker_node(worker_id)
 
     def get_worker_node(self, worker_id: str) -> Optional[Dict[str, Any]]:

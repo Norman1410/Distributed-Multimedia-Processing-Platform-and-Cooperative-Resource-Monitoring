@@ -58,7 +58,7 @@ Revisa `.env.example`:
    ```bash
    curl -X POST http://localhost:8000/jobs \
      -H "Content-Type: application/json" \
-     -d "{\"file_path\":\"dataset/demo.mp4\",\"operation\":\"extract_audio\",\"priority\":5}"
+     -d "{\"file_path\":\"dataset/curated_01_short_360p.mp4\",\"operation\":\"extract_audio\",\"priority\":5}"
    ```
 
 4. Consultar jobs registrados:
@@ -76,7 +76,9 @@ Notas:
   - `generate_thumbnail`: video -> `.jpg`
   - `transcode_h264`: video -> `.mp4` (H.264 + AAC)
   - `extract_metadata`: archivo -> `.json` con metadatos tecnicos
-- Para una prueba exitosa necesitas colocar en `dataset/` un video real con pista de audio; `dataset/demo.mp4` solo sirve como placeholder de estructura.
+- El dataset actual contiene 406 archivos multimedia documentados en `dataset/dataset_metadata.json`.
+- Para operaciones de video usa archivos `.mp4`, por ejemplo `dataset/curated_01_short_360p.mp4`.
+- Para archivos `.wav` usa `extract_metadata`, por ejemplo `dataset/audio_blues_004_blues.00003.wav`.
 - Los resultados quedan guardados en `results/` con prefijo `{job_id}_{operation}`.
 - El `docker-compose` levanta tres workers (`worker-1`, `worker-2`, `worker-3`) para evidenciar distribucion real de jobs.
 - La prioridad ahora es real con colas separadas:
@@ -145,15 +147,23 @@ Para validar esta fase:
 
 ## Dataset curado y metadatos
 
-El repositorio no versiona videos pesados. Para generar un dataset reproducible
-con distintos tamanos, duraciones y orientaciones:
+El dataset de entrega se ubica en `dataset/` y el manifest tecnico esta en
+`dataset/dataset_metadata.json`. La version actual documenta 406 archivos:
+200 audios `.wav` y 206 videos `.mp4`, con hashes SHA-256, duracion,
+codec, bitrate y resolucion cuando aplica.
+
+Para regenerar el manifest con `ffprobe` dentro del contenedor worker:
 
 ```bash
-docker compose run --rm worker_1 python scripts/generate_curated_dataset.py --dataset-dir /app/dataset
 docker compose run --rm worker_1 python scripts/build_dataset_metadata.py --dataset-dir /app/dataset --output /app/dataset/dataset_metadata.json
 ```
 
-El manifest queda en `dataset/dataset_metadata.json`.
+Si necesitas reconstruir solo los videos sinteticos de apoyo (`curated_*.mp4`),
+puedes ejecutar:
+
+```bash
+docker compose run --rm worker_1 python scripts/generate_curated_dataset.py --dataset-dir /app/dataset
+```
 
 ## Generacion automatica por lote
 
@@ -188,13 +198,18 @@ Opciones utiles:
 Con el stack arriba y el dataset documentado:
 
 ```bash
-docker compose run --rm worker_1 python scripts/run_load_test.py --coordinator-url http://coordinator:8000 --dataset-metadata /app/dataset/dataset_metadata.json --repeat 2 --concurrency 8
+docker compose run --rm worker_1 python scripts/run_load_test.py --coordinator-url http://coordinator:8000 --dataset-metadata /app/dataset/dataset_metadata.json --repeat 1 --concurrency 4 --request-timeout-seconds 60 --max-wait-seconds 7200
 ```
 
 Salidas principales:
 
 - `results/load_test_metrics.json`
 - `docs/informe_resultados.md`
+
+El informe actual documenta una corrida de 1024 tareas solicitadas sobre 406
+archivos reales. La prueba expuso contencion de SQLite bajo escritura
+concurrente, hallazgo que queda descrito en el informe y mitigado en
+`shared/job_store.py`.
 
 ## Limpieza para entrega
 

@@ -31,19 +31,26 @@ http://localhost:8000/dashboard
 
 ## 3) Dataset curado
 
-Los videos no se versionan en Git. Para generar un dataset reproducible con varios
-tamanos, duraciones y orientaciones:
+El dataset de entrega se ubica en `dataset/` y esta documentado en
+`dataset/dataset_metadata.json`. La version actual contiene 406 archivos:
+200 audios `.wav` y 206 videos `.mp4`.
+
+Para regenerar el manifest tecnico con `ffprobe` dentro del contenedor worker:
 
 ```bash
-docker compose run --rm worker_1 python scripts/generate_curated_dataset.py --dataset-dir /app/dataset
 docker compose run --rm worker_1 python scripts/build_dataset_metadata.py --dataset-dir /app/dataset --output /app/dataset/dataset_metadata.json
 ```
 
-Si se ejecuta en el host y existe `ffmpeg`/`ffprobe` local:
+Si se ejecuta en el host y existe `ffprobe` local:
 
 ```bash
-python scripts/generate_curated_dataset.py
 python scripts/build_dataset_metadata.py
+```
+
+Para reconstruir solo los videos sinteticos de apoyo (`curated_*.mp4`), usa:
+
+```bash
+docker compose run --rm worker_1 python scripts/generate_curated_dataset.py --dataset-dir /app/dataset
 ```
 
 El manifest queda en:
@@ -54,10 +61,20 @@ dataset/dataset_metadata.json
 
 ## 4) Crear jobs manualmente
 
+Ejemplo con video:
+
 ```bash
 curl -X POST http://localhost:8000/jobs \
   -H "Content-Type: application/json" \
   -d "{\"file_path\":\"dataset/curated_01_short_360p.mp4\",\"operation\":\"extract_metadata\",\"priority\":5}"
+```
+
+Ejemplo con audio:
+
+```bash
+curl -X POST http://localhost:8000/jobs \
+  -H "Content-Type: application/json" \
+  -d "{\"file_path\":\"dataset/audio_blues_004_blues.00003.wav\",\"operation\":\"extract_metadata\",\"priority\":5}"
 ```
 
 Consultar estado:
@@ -75,6 +92,10 @@ Operaciones soportadas:
 - `generate_thumbnail`
 - `extract_audio`
 - `transcode_h264`
+
+Para archivos `.wav`, usa `extract_metadata`. Las operaciones
+`generate_thumbnail`, `extract_audio` y `transcode_h264` estan pensadas para
+videos `.mp4`.
 
 ## 5) Prueba de carga formal
 

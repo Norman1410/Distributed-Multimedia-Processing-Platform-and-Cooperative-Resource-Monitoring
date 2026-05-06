@@ -18,7 +18,9 @@ DEFAULT_OPERATIONS = [
     "extract_audio",
     "transcode_h264",
 ]
+AUTO_OPERATIONS_VALUES = {"", "auto", "manifest", "recommended"}
 TERMINAL_STATUSES = {"completed", "failed"}
+TRANSIENT_HTTP_STATUS_CODES = {500, 502, 503, 504}
 
 
 def parse_args() -> argparse.Namespace:
@@ -27,11 +29,20 @@ def parse_args() -> argparse.Namespace:
     )
     parser.add_argument("--coordinator-url", default="http://localhost:8000")
     parser.add_argument("--dataset-metadata", default="dataset/dataset_metadata.json")
-    parser.add_argument("--operations", default=",".join(DEFAULT_OPERATIONS))
+    parser.add_argument(
+        "--operations",
+        default="manifest",
+        help=(
+            "Operaciones separadas por coma. Usa 'manifest' para respetar "
+            "recommended_operations por archivo (default)."
+        ),
+    )
     parser.add_argument("--repeat", type=int, default=2)
-    parser.add_argument("--concurrency", type=int, default=8)
+    parser.add_argument("--concurrency", type=int, default=4)
     parser.add_argument("--priority", type=int, default=5)
-    parser.add_argument("--request-timeout-seconds", type=float, default=10.0)
+    parser.add_argument("--request-timeout-seconds", type=float, default=60.0)
+    parser.add_argument("--submit-retries", type=int, default=5)
+    parser.add_argument("--submit-retry-delay-seconds", type=float, default=1.0)
     parser.add_argument("--poll-interval-seconds", type=float, default=2.0)
     parser.add_argument("--max-wait-seconds", type=float, default=1800.0)
     parser.add_argument("--output-json", default="results/load_test_metrics.json")
@@ -40,7 +51,9 @@ def parse_args() -> argparse.Namespace:
     return parser.parse_args()
 
 
-def parse_operations(raw: str) -> list[str]:
+def parse_operations(raw: str) -> list[str] | None:
+    if raw.strip().lower() in AUTO_OPERATIONS_VALUES:
+        return None
     operations = [item.strip() for item in raw.split(",") if item.strip()]
     return operations or DEFAULT_OPERATIONS
 
@@ -51,21 +64,35 @@ def load_manifest(path: Path) -> dict[str, Any]:
     return json.loads(path.read_text(encoding="utf-8"))
 
 
+def normalize_recommended_operations(value: Any) -> list[str]:
+    if isinstance(value, list):
+        operations = [str(item).strip() for item in value if str(item).strip()]
+    elif isinstance(value, str):
+        operations = [item.strip() for item in value.split(",") if item.strip()]
+    else:
+        operations = []
+    return operations or ["extract_metadata"]
+
+
 def build_tasks(
     manifest: dict[str, Any],
-    operations: list[str],
+    operations: list[str] | None,
     repeat: int,
     priority: int,
 ) -> list[dict[str, Any]]:
     tasks: list[dict[str, Any]] = []
     for item in manifest.get("files", []):
         file_path = item.get("relative_path") or f"dataset/{item.get('file')}"
-        for operation in operations:
+        item_operations = operations or normalize_recommended_operations(
+            item.get("recommended_operations")
+        )
+        for operation in item_operations:
             for index in range(max(repeat, 1)):
                 tasks.append(
                     {
                         "file_path": file_path,
                         "operation": operation,
+                        "media_type": item.get("media_type") or "unknown",
                         "priority": max(1, min(priority, 10)),
                         "repeat_index": index + 1,
                     }
@@ -96,42 +123,51 @@ def submit_job(
     coordinator_url: str,
     payload: dict[str, Any],
     timeout_seconds: float,
+    submit_retries: int,
+    retry_delay_seconds: float,
 ) -> dict[str, Any]:
     endpoint = f"{coordinator_url.rstrip('/')}/jobs"
     submitted_at = datetime.now(timezone.utc).isoformat()
-    try:
-        data = request_json(
-            "POST",
-            endpoint,
-            payload={
-                "file_path": payload["file_path"],
-                "operation": payload["operation"],
-                "priority": payload["priority"],
-            },
-            timeout_seconds=timeout_seconds,
-        )
-        return {
-            "ok": True,
-            "submitted_at": submitted_at,
-            "job_id": data.get("job_id"),
-            "status": data.get("status"),
-            "payload": payload,
-        }
-    except urlerror.HTTPError as exc:
-        details = exc.read().decode("utf-8", errors="replace")
-        return {
-            "ok": False,
-            "submitted_at": submitted_at,
-            "error": f"http_error_{exc.code}: {details}",
-            "payload": payload,
-        }
-    except Exception as exc:
-        return {
-            "ok": False,
-            "submitted_at": submitted_at,
-            "error": str(exc),
-            "payload": payload,
-        }
+    max_attempts = max(submit_retries, 0) + 1
+    last_error = ""
+    for attempt in range(1, max_attempts + 1):
+        try:
+            data = request_json(
+                "POST",
+                endpoint,
+                payload={
+                    "file_path": payload["file_path"],
+                    "operation": payload["operation"],
+                    "priority": payload["priority"],
+                },
+                timeout_seconds=timeout_seconds,
+            )
+            return {
+                "ok": True,
+                "submitted_at": submitted_at,
+                "job_id": data.get("job_id"),
+                "status": data.get("status"),
+                "payload": payload,
+                "submit_attempts": attempt,
+            }
+        except urlerror.HTTPError as exc:
+            details = exc.read().decode("utf-8", errors="replace")
+            last_error = f"http_error_{exc.code}: {details}"
+            if exc.code not in TRANSIENT_HTTP_STATUS_CODES or attempt >= max_attempts:
+                break
+        except Exception as exc:
+            last_error = str(exc)
+            if attempt >= max_attempts:
+                break
+        time.sleep(max(retry_delay_seconds, 0.0) * attempt)
+
+    return {
+        "ok": False,
+        "submitted_at": submitted_at,
+        "error": last_error,
+        "payload": payload,
+        "submit_attempts": max_attempts,
+    }
 
 
 def submit_all(args: argparse.Namespace, tasks: list[dict[str, Any]]) -> list[dict[str, Any]]:
@@ -143,6 +179,8 @@ def submit_all(args: argparse.Namespace, tasks: list[dict[str, Any]]) -> list[di
                 args.coordinator_url,
                 task,
                 args.request_timeout_seconds,
+                args.submit_retries,
+                args.submit_retry_delay_seconds,
             )
             for task in tasks
         ]
@@ -153,12 +191,12 @@ def submit_all(args: argparse.Namespace, tasks: list[dict[str, Any]]) -> list[di
             if result["ok"]:
                 print(
                     f"OK  {payload['operation']} {payload['file_path']} "
-                    f"job_id={result.get('job_id')}"
+                    f"job_id={result.get('job_id')} attempts={result.get('submit_attempts')}"
                 )
             else:
                 print(
                     f"ERR {payload['operation']} {payload['file_path']} "
-                    f"error={result.get('error')}"
+                    f"error={result.get('error')} attempts={result.get('submit_attempts')}"
                 )
     return results
 
@@ -283,6 +321,8 @@ def summarize(
         else 0,
         "worker_distribution": count_by(completed, "worker_id"),
         "operation_distribution": count_by(final_jobs, "operation"),
+        "requested_operation_distribution": count_by(tasks, "operation"),
+        "requested_media_distribution": count_by(tasks, "media_type"),
         "status_distribution": count_by(final_jobs, "status"),
         "failure_types": dict(sorted(failure_types.items())),
         "processing_seconds": {
@@ -317,6 +357,18 @@ def write_report(path: Path, summary: dict[str, Any]) -> None:
         f"- Tiempo total de pared: {summary.get('wall_seconds')} s",
         f"- Throughput: {summary.get('throughput_jobs_per_second')} jobs/s",
         "",
+        "## Distribucion solicitada",
+        "",
+    ]
+    for media_type, count in summary.get("requested_media_distribution", {}).items():
+        lines.append(f"- {media_type}: {count}")
+
+    lines.extend(["", "## Operaciones solicitadas", ""])
+    for operation, count in summary.get("requested_operation_distribution", {}).items():
+        lines.append(f"- {operation}: {count}")
+
+    lines.extend([
+        "",
         "## Tiempos de procesamiento",
         "",
         f"- Min: {summary['processing_seconds']['min']} s",
@@ -333,7 +385,7 @@ def write_report(path: Path, summary: dict[str, Any]) -> None:
         "",
         "## Distribucion por worker",
         "",
-    ]
+    ])
     for worker_id, count in summary.get("worker_distribution", {}).items():
         lines.append(f"- {worker_id}: {count}")
 
